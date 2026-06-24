@@ -12,9 +12,10 @@
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.0.25';
+const CARD_VERSION = '1.0.26';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.0.26: Fixed add-condition button colors to use the correct "filled" appearance variables (var(--wa-color-fill-normal) / var(--ha-color-fill-primary-normal-hover)) instead of the "accent/loud" ones, found via ha-button's real source; fixed editor jumping back to Config tab on every condition edit (setConfig now only resets tab/selection state on true first load, not on re-calls echoing our own config-changed)
 // v1.0.25: Fixed crash in the Visibility tab - _evaluateVisibility called this._evaluateCondition, which broke when borrowed by the editor via .call() since the editor has no copy of that method; now calls it as a plain function reference instead of through this
 // v1.0.24: Fixed "+ Add condition" button to use HA's exact real CSS variables for color, hover color, height, padding, and pill shape, found via devtools on a real ha-button
 // v1.0.23: Fixed chevron to rotate up/down (was rotating sideways); switched all hardcoded blue colors to HA's real --primary-color variable so they always match HA's actual theme color exactly
@@ -177,11 +178,14 @@ class ChronoPanelCard extends HTMLElement {
 // borrowing/impersonation of hui-stack-card-editor itself.
 class ChronoPanelCardEditor extends HTMLElement {
   setConfig(config) {
+    const isFirstLoad = this._config === undefined;
     this._config = config || { cards: [] };
-    this._selected = 0;
-    this._guiMode = true;
-    this._innerTab = "config";
-    this._collapsedConditions = {};
+    if (isFirstLoad) {
+      this._selected = 0;
+      this._guiMode = true;
+      this._innerTab = "config";
+      this._collapsedConditions = {};
+    }
     this._render();
   }
 
@@ -485,7 +489,7 @@ class ChronoPanelCardEditor extends HTMLElement {
 
     const addBtn = document.createElement("button");
     addBtn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" style="vertical-align:-3px;margin-right:6px;"><path fill="currentColor" d="M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z"/></svg>Add condition`;
-    addBtn.style.background = "var(--ha-color-fill-primary-loud-active)";
+    addBtn.style.background = "var(--wa-color-fill-normal)";
     addBtn.style.color = "#fff";
     addBtn.style.border = "none";
     addBtn.style.borderRadius = "var(--ha-border-radius-pill)";
@@ -493,8 +497,8 @@ class ChronoPanelCardEditor extends HTMLElement {
     addBtn.style.padding = "0 var(--ha-space-4)";
     addBtn.style.fontWeight = "600";
     addBtn.style.cursor = "pointer";
-    addBtn.addEventListener("mouseenter", () => { addBtn.style.background = "var(--ha-color-fill-primary-loud-hover)"; });
-    addBtn.addEventListener("mouseleave", () => { addBtn.style.background = "var(--ha-color-fill-primary-loud-active)"; });
+    addBtn.addEventListener("mouseenter", () => { addBtn.style.background = "var(--ha-color-fill-primary-normal-hover)"; });
+    addBtn.addEventListener("mouseleave", () => { addBtn.style.background = "var(--wa-color-fill-normal)"; });
 
     const dropdown = document.createElement("div");
     dropdown.style.position = "absolute";
