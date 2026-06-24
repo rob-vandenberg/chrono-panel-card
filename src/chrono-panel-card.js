@@ -12,9 +12,10 @@
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.0.5';
+const CARD_VERSION = '1.0.6';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.0.6: Added visual editor (ChronoPanelCardEditor) - add/remove/reorder/copy/cut child cards
 // v1.0.5: Added numeric_state condition support to _evaluateVisibility()
 // v1.0.4: Initial release
 
@@ -27,6 +28,14 @@ console.info(
 );
 
 class ChronoPanelCard extends HTMLElement {
+  static async getConfigElement() {
+    return document.createElement("chrono-panel-card-editor");
+  }
+
+  static getStubConfig() {
+    return { cards: [] };
+  }
+
   setConfig(config) {
     if (!config || !Array.isArray(config.cards) || config.cards.length === 0) {
       throw new Error("chrono-panel-card: 'cards' must be a non-empty array");
@@ -134,7 +143,197 @@ class ChronoPanelCard extends HTMLElement {
   }
 }
 
+// ─── Editor ─────────────────────────────────────────────────────────────────
+// Reimplementation of HA's native stack-card editor UX (tabs + per-card
+// toolbar: move/copy/cut/delete, add via hui-card-picker). Built from
+// scratch against chrono-panel-card's own `cards:` config shape - no
+// borrowing/impersonation of hui-stack-card-editor itself.
+class ChronoPanelCardEditor extends HTMLElement {
+  setConfig(config) {
+    this._config = config || { cards: [] };
+    this._selected = 0;
+    this._guiMode = true;
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    if (this._childEditorEl) this._childEditorEl.hass = hass;
+    if (this._pickerEl) this._pickerEl.hass = hass;
+  }
+
+  set lovelace(lovelace) {
+    this._lovelace = lovelace;
+  }
+
+  _fireConfigChanged() {
+    this.dispatchEvent(
+      new CustomEvent("config-changed", {
+        detail: { config: this._config },
+        bubbles: true,
+        composed: true,
+      })
+    );
+  }
+
+  _render() {
+    this.innerHTML = "";
+    const cards = this._config.cards;
+    const numCards = cards.length;
+
+    // Tab strip + add button
+    const toolbar = document.createElement("div");
+    toolbar.style.display = "flex";
+    toolbar.style.alignItems = "center";
+    toolbar.style.gap = "4px";
+    toolbar.style.marginBottom = "8px";
+
+    cards.forEach((_card, i) => {
+      const tab = document.createElement("button");
+      tab.textContent = String(i + 1);
+      tab.style.fontWeight = i === this._selected ? "bold" : "normal";
+      tab.addEventListener("click", () => {
+        this._selected = i;
+        this._guiMode = true;
+        this._render();
+      });
+      toolbar.appendChild(tab);
+    });
+
+    const addBtn = document.createElement("button");
+    addBtn.textContent = "+";
+    addBtn.addEventListener("click", () => {
+      this._selected = this._config.cards.length;
+      this._render();
+    });
+    toolbar.appendChild(addBtn);
+    this.appendChild(toolbar);
+
+    const editorArea = document.createElement("div");
+    this.appendChild(editorArea);
+
+    if (this._selected < numCards) {
+      // Per-card toolbar: move prev/next, copy, cut, delete
+      const cardToolbar = document.createElement("div");
+      cardToolbar.style.display = "flex";
+      cardToolbar.style.justifyContent = "flex-end";
+      cardToolbar.style.gap = "4px";
+      cardToolbar.style.marginBottom = "8px";
+
+      const movePrev = document.createElement("button");
+      movePrev.textContent = "←";
+      movePrev.disabled = this._selected === 0;
+      movePrev.addEventListener("click", () => this._move(-1));
+      cardToolbar.appendChild(movePrev);
+
+      const moveNext = document.createElement("button");
+      moveNext.textContent = "→";
+      moveNext.disabled = this._selected === numCards - 1;
+      moveNext.addEventListener("click", () => this._move(1));
+      cardToolbar.appendChild(moveNext);
+
+      const copyBtn = document.createElement("button");
+      copyBtn.textContent = "Copy";
+      copyBtn.addEventListener("click", () => this._copy());
+      cardToolbar.appendChild(copyBtn);
+
+      const cutBtn = document.createElement("button");
+      cutBtn.textContent = "Cut";
+      cutBtn.addEventListener("click", () => this._cut());
+      cardToolbar.appendChild(cutBtn);
+
+      const deleteBtn = document.createElement("button");
+      deleteBtn.textContent = "Delete";
+      deleteBtn.addEventListener("click", () => this._delete());
+      cardToolbar.appendChild(deleteBtn);
+
+      editorArea.appendChild(cardToolbar);
+
+      // Selected child's own editor (Strategy 1: lazy-load-trigger the
+      // child's type, then call its own static getConfigElement()).
+      const cardConfig = cards[this._selected];
+      window.loadCardHelpers().then((helpers) => {
+        const tempEl = helpers.createCardElement(cardConfig);
+        const tagName = tempEl.localName;
+
+        customElements.whenDefined(tagName).then(() => {
+          const ElClass = customElements.get(tagName);
+          if (!ElClass || typeof ElClass.getConfigElement !== "function") {
+            const fallback = document.createElement("div");
+            fallback.textContent =
+              "No visual editor available for this card type. Edit via YAML.";
+            editorArea.appendChild(fallback);
+            return;
+          }
+          ElClass.getConfigElement().then((editorEl) => {
+            editorEl.hass = this._hass;
+            editorEl.lovelace = this._lovelace;
+            editorEl.setConfig(cardConfig);
+            editorEl.addEventListener("config-changed", (ev) => {
+              ev.stopPropagation();
+              const updatedCards = [...this._config.cards];
+              updatedCards[this._selected] = ev.detail.config;
+              this._config = { ...this._config, cards: updatedCards };
+              this._fireConfigChanged();
+            });
+            this._childEditorEl = editorEl;
+            editorArea.appendChild(editorEl);
+          });
+        });
+      });
+    } else {
+      // Past the end: show HA's native card-type picker to add a new card.
+      const picker = document.createElement("hui-card-picker");
+      picker.hass = this._hass;
+      picker.lovelace = this._lovelace;
+      picker.addEventListener("config-changed", (ev) => {
+        ev.stopPropagation();
+        const updatedCards = [...this._config.cards, ev.detail.config];
+        this._config = { ...this._config, cards: updatedCards };
+        this._fireConfigChanged();
+        this._render();
+      });
+      this._pickerEl = picker;
+      editorArea.appendChild(picker);
+    }
+  }
+
+  _move(delta) {
+    const cards = [...this._config.cards];
+    const [card] = cards.splice(this._selected, 1);
+    cards.splice(this._selected + delta, 0, card);
+    this._config = { ...this._config, cards };
+    this._selected += delta;
+    this._fireConfigChanged();
+    this._render();
+  }
+
+  _copy() {
+    this._clipboard = JSON.parse(
+      JSON.stringify(this._config.cards[this._selected])
+    );
+  }
+
+  _cut() {
+    this._copy();
+    this._delete();
+  }
+
+  _delete() {
+    const cards = [...this._config.cards];
+    cards.splice(this._selected, 1);
+    this._config = { ...this._config, cards };
+    this._selected = Math.max(0, this._selected - 1);
+    this._fireConfigChanged();
+    this._render();
+  }
+}
+
+customElements.define("chrono-panel-card-editor", ChronoPanelCardEditor);
+
 customElements.define("chrono-panel-card", ChronoPanelCard);
+
+
 
 // Register with HA's card picker so it shows up in the visual editor list.
 window.customCards = window.customCards || [];
