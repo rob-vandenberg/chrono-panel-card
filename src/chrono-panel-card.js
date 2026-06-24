@@ -12,15 +12,17 @@
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.0.6';
+const CARD_VERSION = '1.0.8';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.0.8: Fixed crash when a child card's getConfigElement() returns sync instead of a Promise
+// v1.0.7: Fixed console banner text (SLIDESHOW -> PANEL)
 // v1.0.6: Added visual editor (ChronoPanelCardEditor) - add/remove/reorder/copy/cut child cards
 // v1.0.5: Added numeric_state condition support to _evaluateVisibility()
 // v1.0.4: Initial release
 
 console.info(
-  `%c CHRONO-%cSLIDESHOW%c-CARD %c v${CARD_VERSION} `,
+  `%c CHRONO-%cPANEL%c-CARD %c v${CARD_VERSION} `,
   'background-color: #101010; color: #FFFFFF; font-weight: bold; padding: 2px 0 2px 4px; border-radius: 3px 0 0 3px;',
   'background-color: #101010; color: #4676d3; font-weight: bold; padding: 2px 0;',
   'background-color: #101010; color: #FFFFFF; font-weight: bold; padding: 2px 4px 2px 0;',
@@ -265,7 +267,7 @@ class ChronoPanelCardEditor extends HTMLElement {
             editorArea.appendChild(fallback);
             return;
           }
-          ElClass.getConfigElement().then((editorEl) => {
+          Promise.resolve(ElClass.getConfigElement()).then((editorEl) => {
             editorEl.hass = this._hass;
             editorEl.lovelace = this._lovelace;
             editorEl.setConfig(cardConfig);
