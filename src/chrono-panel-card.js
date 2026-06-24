@@ -12,9 +12,10 @@
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.0.21';
+const CARD_VERSION = '1.0.22';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.0.22: Removed the empty-cards rejection entirely (matches vertical-stack's own behavior: zero cards is a normal starting state, not an error) - no more fake placeholder card needed; also: one shared close-any-open-popup mechanism instead of each menu/dropdown managing its own; dropdown rows stop click propagation; condition evaluation array no longer rebuilt every render
 // v1.0.21: Code review fixes - added state_not support to the one real evaluator and reused it from the editor (removed duplicate logic that could drift); editor no longer assumes visible when hass is missing; dropdown/menu close on outside click; getStubConfig now returns a valid non-empty config
 // v1.0.20: Fixed banner subtitle to correctly distinguish "no conditions set" from "conditions set and currently passing"
 // v1.0.19: Fixed chevron icon size to match HA's actual size (was using the right shape but the old, too-small dimensions)
@@ -48,12 +49,12 @@ class ChronoPanelCard extends HTMLElement {
   }
 
   static getStubConfig() {
-    return { cards: [{ type: "markdown", content: "New card" }] };
+    return { cards: [] };
   }
 
   setConfig(config) {
-    if (!config || !Array.isArray(config.cards) || config.cards.length === 0) {
-      throw new Error("chrono-panel-card: 'cards' must be a non-empty array");
+    if (!config || !Array.isArray(config.cards)) {
+      throw new Error("chrono-panel-card: 'cards' must be an array");
     }
 
     this._config = config;
@@ -127,24 +128,26 @@ class ChronoPanelCard extends HTMLElement {
     // Support the same array-of-conditions shape HA uses natively.
     // Only "state" and "numeric_state" condition types are implemented,
     // on purpose. Other types: ignore, don't block (unknown types pass).
-    return visibility.every((cond) => {
-      if (cond.condition === "state") {
-        const entityState = hass.states[cond.entity]?.state;
-        if (cond.state !== undefined) return entityState === cond.state;
-        if (cond.state_not !== undefined) return entityState !== cond.state_not;
-        return true;
-      }
+    return visibility.every((cond) => this._evaluateCondition(cond, hass));
+  }
 
-      if (cond.condition === "numeric_state") {
-        const value = parseFloat(hass.states[cond.entity]?.state);
-        if (isNaN(value)) return false;
-        if (cond.above !== undefined && !(value > cond.above)) return false;
-        if (cond.below !== undefined && !(value < cond.below)) return false;
-        return true;
-      }
+  _evaluateCondition(cond, hass) {
+    if (cond.condition === "state") {
+      const entityState = hass.states[cond.entity]?.state;
+      if (cond.state !== undefined) return entityState === cond.state;
+      if (cond.state_not !== undefined) return entityState !== cond.state_not;
+      return true;
+    }
 
-      return true; // unknown types: ignore, don't block
-    });
+    if (cond.condition === "numeric_state") {
+      const value = parseFloat(hass.states[cond.entity]?.state);
+      if (isNaN(value)) return false;
+      if (cond.above !== undefined && !(value > cond.above)) return false;
+      if (cond.below !== undefined && !(value < cond.below)) return false;
+      return true;
+    }
+
+    return true; // unknown types: ignore, don't block
   }
 
   getCardSize() {
@@ -402,11 +405,30 @@ class ChronoPanelCardEditor extends HTMLElement {
     }
   }
 
+  _openPopup(el) {
+    this._closeOpenPopup();
+    el.style.display = "block";
+    this._openPopupEl = el;
+    document.addEventListener("click", this._closeOpenPopupHandler = () => this._closeOpenPopup(), { once: true });
+  }
+
+  _closeOpenPopup() {
+    if (this._openPopupEl) {
+      this._openPopupEl.style.display = "none";
+      this._openPopupEl = null;
+    }
+  }
+
   _evaluateConditions(conditions) {
     if (!this._hass) return false; // no data yet: don't claim visible without checking
     // Reuse the exact same logic the real running card uses, so the
     // editor's preview can never disagree with actual runtime behavior.
     return ChronoPanelCard.prototype._evaluateVisibility.call(this, conditions, this._hass);
+  }
+
+  _evaluateOneCondition(cond) {
+    if (!this._hass) return false; // no data yet: don't claim visible without checking
+    return ChronoPanelCard.prototype._evaluateCondition.call(this, cond, this._hass);
   }
 
   _renderVisibilityEditor(cardConfig) {
@@ -495,21 +517,23 @@ class ChronoPanelCardEditor extends HTMLElement {
       row.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="${t.icon}"/></svg><span>${t.label}</span>`;
       row.addEventListener("mouseenter", () => { row.style.background = "#2a2a2a"; });
       row.addEventListener("mouseleave", () => { row.style.background = "none"; });
-      row.addEventListener("click", () => {
+      row.addEventListener("click", (e) => {
+        e.stopPropagation();
         const newCond = t.id === "state"
           ? customElements.get("ha-card-condition-state").defaultConfig
           : customElements.get("ha-card-condition-numeric_state").defaultConfig;
         this._updateVisibility(cardConfig, [...conditions, { ...newCond }]);
+        this._closeOpenPopup();
       });
       dropdown.appendChild(row);
     });
 
     addBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      const opening = dropdown.style.display === "none";
-      dropdown.style.display = opening ? "block" : "none";
-      if (opening) {
-        document.addEventListener("click", () => { dropdown.style.display = "none"; }, { once: true });
+      if (dropdown.style.display === "none") {
+        this._openPopup(dropdown);
+      } else {
+        this._closeOpenPopup();
       }
     });
 
@@ -525,7 +549,7 @@ class ChronoPanelCardEditor extends HTMLElement {
       numeric_state: { label: "Entity numeric state", icon: "M3,3H21V5H3V3M3,7H21V9H3V7M3,11H21V13H3V11M3,15H21V17H3V15M3,19H21V21H3V19Z" },
     };
     const info = TYPE_INFO[cond.condition] || { label: cond.condition, icon: "" };
-    const conditionPasses = this._evaluateConditions([cond]);
+    const conditionPasses = this._evaluateOneCondition(cond);
     const dotColor = conditionPasses ? "#4caf50" : "#ff9800";
     const collapsed = !!this._collapsedConditions[index];
 
@@ -596,15 +620,16 @@ class ChronoPanelCardEditor extends HTMLElement {
     deleteRow.addEventListener("mouseleave", () => { deleteRow.style.background = "none"; });
     deleteRow.addEventListener("click", (e) => {
       e.stopPropagation();
+      this._closeOpenPopup();
       this._removeCondition(index);
     });
     menu.appendChild(deleteRow);
     menuBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      const opening = menu.style.display === "none";
-      menu.style.display = opening ? "block" : "none";
-      if (opening) {
-        document.addEventListener("click", () => { menu.style.display = "none"; }, { once: true });
+      if (menu.style.display === "none") {
+        this._openPopup(menu);
+      } else {
+        this._closeOpenPopup();
       }
     });
     menuWrap.appendChild(menuBtn);
