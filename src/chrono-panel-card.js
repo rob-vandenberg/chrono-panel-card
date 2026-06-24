@@ -12,9 +12,10 @@
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.0.14';
+const CARD_VERSION = '1.0.15';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.0.15: Restyled visibility condition editor to match HA's native look (collapsible cards, icon+dot badge, three-dot menu, pill add button with dropdown)
 // v1.0.14: Fixed code/visual toggle icon to swap glyph (braces/list) instead of drawing a border; use native focus outline
 // v1.0.13: Added {} GUI/YAML toggle for the selected child's Config tab, using ha-yaml-editor
 // v1.0.12: Added inner Config/Visibility tabs per child (HA-style); restyled card-selector tabs and toolbar icons to match HA's look
@@ -162,6 +163,7 @@ class ChronoPanelCardEditor extends HTMLElement {
     this._selected = 0;
     this._guiMode = true;
     this._innerTab = "config";
+    this._collapsedConditions = {};
     this._render();
   }
 
@@ -398,72 +400,207 @@ class ChronoPanelCardEditor extends HTMLElement {
     const conditions = cardConfig.visibility || [];
 
     const status = document.createElement("div");
-    status.textContent = conditions.length === 0
-      ? "Visible"
-      : "Visible only when all conditions below are met";
-    status.style.padding = "6px 10px";
-    status.style.marginBottom = "8px";
-    status.style.borderRadius = "4px";
-    status.style.background = conditions.length === 0 ? "#1b2e1b" : "#332b14";
-    status.style.color = conditions.length === 0 ? "#8bc88b" : "#d9a93b";
+    status.style.display = "flex";
+    status.style.alignItems = "center";
+    status.style.gap = "8px";
+    status.style.padding = "10px 14px";
+    status.style.marginBottom = "12px";
+    status.style.borderRadius = "8px";
+
+    const visible = conditions.length === 0;
+    status.style.background = visible ? "#1f3322" : "#332b14";
+
+    const dot = document.createElement("span");
+    dot.textContent = visible ? "👁" : "🚫";
+    status.appendChild(dot);
+
+    const textWrap = document.createElement("div");
+    const line1 = document.createElement("div");
+    line1.textContent = visible ? "Current visibility: Visible" : "Current visibility: Hidden";
+    line1.style.fontWeight = "600";
+    line1.style.color = "#fff";
+    const line2 = document.createElement("div");
+    line2.textContent = visible ? "No visibility conditions are set" : "Not all visibility conditions are met";
+    line2.style.fontSize = "12px";
+    line2.style.color = "#bbb";
+    textWrap.appendChild(line1);
+    textWrap.appendChild(line2);
+    status.appendChild(textWrap);
     container.appendChild(status);
 
     conditions.forEach((cond, i) => {
       container.appendChild(this._renderConditionCard(cond, i));
     });
 
-    const addRow = document.createElement("div");
-    addRow.style.display = "flex";
-    addRow.style.gap = "8px";
-    addRow.style.marginTop = "8px";
-
-    const typeSelect = document.createElement("select");
-    ["state", "numeric_state"].forEach((t) => {
-      const opt = document.createElement("option");
-      opt.value = t;
-      opt.textContent = t === "state" ? "Entity state" : "Entity numeric state";
-      typeSelect.appendChild(opt);
-    });
-    addRow.appendChild(typeSelect);
+    // "+ Add condition" pill button with a dropdown of condition types
+    const addWrap = document.createElement("div");
+    addWrap.style.position = "relative";
+    addWrap.style.marginTop = "8px";
 
     const addBtn = document.createElement("button");
-    addBtn.textContent = "+ Add condition";
-    addBtn.addEventListener("click", () => {
-      const newCond = typeSelect.value === "state"
-        ? { condition: "state", entity: "", state: "" }
-        : { condition: "numeric_state", entity: "" };
-      this._updateVisibility(cardConfig, [...conditions, newCond]);
-    });
-    addRow.appendChild(addBtn);
+    addBtn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" style="vertical-align:-3px;margin-right:6px;"><path fill="currentColor" d="M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z"/></svg>Add condition`;
+    addBtn.style.background = "#03a9f4";
+    addBtn.style.color = "#fff";
+    addBtn.style.border = "none";
+    addBtn.style.borderRadius = "20px";
+    addBtn.style.padding = "8px 16px";
+    addBtn.style.fontWeight = "600";
+    addBtn.style.cursor = "pointer";
+    addBtn.addEventListener("mouseenter", () => { addBtn.style.background = "#29b6f6"; });
+    addBtn.addEventListener("mouseleave", () => { addBtn.style.background = "#03a9f4"; });
 
-    container.appendChild(addRow);
+    const dropdown = document.createElement("div");
+    dropdown.style.position = "absolute";
+    dropdown.style.top = "100%";
+    dropdown.style.left = "0";
+    dropdown.style.marginTop = "4px";
+    dropdown.style.background = "#1e1e1e";
+    dropdown.style.border = "1px solid #444";
+    dropdown.style.borderRadius = "8px";
+    dropdown.style.boxShadow = "0 4px 12px rgba(0,0,0,0.4)";
+    dropdown.style.display = "none";
+    dropdown.style.zIndex = "10";
+    dropdown.style.minWidth = "200px";
+
+    const TYPES = [
+      { id: "numeric_state", label: "Entity numeric state", icon: "M3,3H21V5H3V3M3,7H21V9H3V7M3,11H21V13H3V11M3,15H21V17H3V15M3,19H21V21H3V19Z" },
+      { id: "state", label: "Entity state", icon: "M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6L8,12L12,18L16,12L12,6Z" },
+    ];
+
+    TYPES.forEach((t) => {
+      const row = document.createElement("div");
+      row.style.display = "flex";
+      row.style.alignItems = "center";
+      row.style.gap = "10px";
+      row.style.padding = "10px 14px";
+      row.style.cursor = "pointer";
+      row.style.color = "#e0e0e0";
+      row.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="${t.icon}"/></svg><span>${t.label}</span>`;
+      row.addEventListener("mouseenter", () => { row.style.background = "#2a2a2a"; });
+      row.addEventListener("mouseleave", () => { row.style.background = "none"; });
+      row.addEventListener("click", () => {
+        const newCond = t.id === "state"
+          ? { condition: "state", entity: "", state: "" }
+          : { condition: "numeric_state", entity: "" };
+        this._updateVisibility(cardConfig, [...conditions, newCond]);
+      });
+      dropdown.appendChild(row);
+    });
+
+    addBtn.addEventListener("click", () => {
+      dropdown.style.display = dropdown.style.display === "none" ? "block" : "none";
+    });
+
+    addWrap.appendChild(addBtn);
+    addWrap.appendChild(dropdown);
+    container.appendChild(addWrap);
     return container;
   }
 
   _renderConditionCard(cond, index) {
+    const TYPE_INFO = {
+      state: { label: "Entity state", icon: "M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6L8,12L12,18L16,12L12,6Z", dot: "#4caf50" },
+      numeric_state: { label: "Entity numeric state", icon: "M3,3H21V5H3V3M3,7H21V9H3V7M3,11H21V13H3V11M3,15H21V17H3V15M3,19H21V21H3V19Z", dot: "#4caf50" },
+    };
+    const info = TYPE_INFO[cond.condition] || { label: cond.condition, icon: "", dot: "#888" };
+    const collapsed = !!this._collapsedConditions[index];
+
     const card = document.createElement("div");
     card.style.border = "1px solid #444";
-    card.style.borderRadius = "4px";
-    card.style.padding = "8px";
+    card.style.borderRadius = "8px";
     card.style.marginBottom = "8px";
+    card.style.overflow = "hidden";
 
     const header = document.createElement("div");
     header.style.display = "flex";
-    header.style.justifyContent = "space-between";
     header.style.alignItems = "center";
-    header.style.marginBottom = "6px";
+    header.style.gap = "8px";
+    header.style.padding = "10px 12px";
+    header.style.cursor = "pointer";
+
+    const chevron = document.createElement("span");
+    chevron.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" style="transform:rotate(${collapsed ? "-90deg" : "0deg"});transition:transform .15s;"><path fill="currentColor" d="M7,10L12,15L17,10H7Z"/></svg>`;
+    header.appendChild(chevron);
+
+    const iconWrap = document.createElement("span");
+    iconWrap.style.position = "relative";
+    iconWrap.style.display = "inline-flex";
+    iconWrap.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="${info.icon}"/></svg>`;
+    const badge = document.createElement("span");
+    badge.style.position = "absolute";
+    badge.style.top = "-2px";
+    badge.style.right = "-2px";
+    badge.style.width = "8px";
+    badge.style.height = "8px";
+    badge.style.borderRadius = "50%";
+    badge.style.background = info.dot;
+    iconWrap.appendChild(badge);
+    header.appendChild(iconWrap);
 
     const label = document.createElement("span");
-    label.textContent = cond.condition === "state" ? "Entity state" : "Entity numeric state";
-    label.style.fontWeight = "bold";
+    label.textContent = info.label;
+    label.style.flex = "1";
+    label.style.fontWeight = "600";
     header.appendChild(label);
 
-    const deleteBtn = document.createElement("button");
-    deleteBtn.textContent = "🗑";
-    deleteBtn.addEventListener("click", () => this._removeCondition(index));
-    header.appendChild(deleteBtn);
+    // Three-dot menu (delete only, for now)
+    const menuWrap = document.createElement("span");
+    menuWrap.style.position = "relative";
+    const menuBtn = document.createElement("button");
+    menuBtn.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12,16A2,2 0 0,1 14,18A2,2 0 0,1 12,20A2,2 0 0,1 10,18A2,2 0 0,1 12,16M12,10A2,2 0 0,1 14,12A2,2 0 0,1 12,14A2,2 0 0,1 10,12A2,2 0 0,1 12,10M12,4A2,2 0 0,1 14,6A2,2 0 0,1 12,8A2,2 0 0,1 10,6A2,2 0 0,1 12,4Z"/></svg>`;
+    menuBtn.style.background = "none";
+    menuBtn.style.border = "none";
+    menuBtn.style.color = "#e1e1e1";
+    menuBtn.style.cursor = "pointer";
+    const menu = document.createElement("div");
+    menu.style.position = "absolute";
+    menu.style.right = "0";
+    menu.style.top = "100%";
+    menu.style.background = "#1e1e1e";
+    menu.style.border = "1px solid #444";
+    menu.style.borderRadius = "8px";
+    menu.style.boxShadow = "0 4px 12px rgba(0,0,0,0.4)";
+    menu.style.display = "none";
+    menu.style.zIndex = "10";
+    menu.style.minWidth = "120px";
+    const deleteRow = document.createElement("div");
+    deleteRow.textContent = "Delete";
+    deleteRow.style.padding = "10px 14px";
+    deleteRow.style.cursor = "pointer";
+    deleteRow.style.color = "#e0e0e0";
+    deleteRow.addEventListener("mouseenter", () => { deleteRow.style.background = "#2a2a2a"; });
+    deleteRow.addEventListener("mouseleave", () => { deleteRow.style.background = "none"; });
+    deleteRow.addEventListener("click", (e) => {
+      e.stopPropagation();
+      this._removeCondition(index);
+    });
+    menu.appendChild(deleteRow);
+    menuBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      menu.style.display = menu.style.display === "none" ? "block" : "none";
+    });
+    menuWrap.appendChild(menuBtn);
+    menuWrap.appendChild(menu);
+    header.appendChild(menuWrap);
 
+    header.addEventListener("click", () => {
+      this._collapsedConditions[index] = !collapsed;
+      this._render();
+    });
     card.appendChild(header);
+
+    if (!collapsed) {
+      const body = document.createElement("div");
+      body.style.padding = "0 12px 12px 12px";
+      body.appendChild(this._renderConditionFields(cond, index));
+      card.appendChild(body);
+    }
+
+    return card;
+  }
+
+  _renderConditionFields(cond, index) {
+    const wrap = document.createElement("div");
 
     const entityInput = document.createElement("input");
     entityInput.type = "text";
@@ -475,7 +612,7 @@ class ChronoPanelCardEditor extends HTMLElement {
     entityInput.addEventListener("change", () => {
       this._patchCondition(index, { entity: entityInput.value });
     });
-    card.appendChild(entityInput);
+    wrap.appendChild(entityInput);
 
     if (cond.condition === "state") {
       const stateInput = document.createElement("input");
@@ -487,7 +624,7 @@ class ChronoPanelCardEditor extends HTMLElement {
       stateInput.addEventListener("change", () => {
         this._patchCondition(index, { state: stateInput.value });
       });
-      card.appendChild(stateInput);
+      wrap.appendChild(stateInput);
     } else {
       const row = document.createElement("div");
       row.style.display = "flex";
@@ -515,10 +652,10 @@ class ChronoPanelCardEditor extends HTMLElement {
       });
       row.appendChild(belowInput);
 
-      card.appendChild(row);
+      wrap.appendChild(row);
     }
 
-    return card;
+    return wrap;
   }
 
   _patchCondition(index, patch) {
