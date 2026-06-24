@@ -12,9 +12,10 @@
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.0.27';
+const CARD_VERSION = '1.1.28';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.1.28: Rebuilt the editor's rendering mechanism - persistent DOM skeleton built once, each section (tab strip, card toolbar, inner tabs, content area) updates only when it actually changes, instead of wiping and rebuilding the entire editor on every state change. Fixes a real crash (hui-card-picker thrown from inside its own update lifecycle when torn down mid-update during cut) and removes the underlying cause, not just that one occurrence. All existing behavior (tabs, move/copy/cut/delete, Config/Visibility tabs, child editor mounting, YAML toggle, visibility conditions, add-card picker) is unchanged.
 // v1.0.27: Fixed Copy/Cut to actually do something useful - now writes to the same sessionStorage key (dashboardCardClipboard) hui-card-picker itself already reads, so the real "paste from clipboard" tile appears automatically in the existing add-card screen; previously copy wrote to an unused in-memory field nothing ever read back
 // v1.0.26: Fixed add-condition button colors to use the correct "filled" appearance variables (var(--wa-color-fill-normal) / var(--ha-color-fill-primary-normal-hover)) instead of the "accent/loud" ones, found via ha-button's real source; fixed editor jumping back to Config tab on every condition edit (setConfig now only resets tab/selection state on true first load, not on re-calls echoing our own config-changed)
 // v1.0.25: Fixed crash in the Visibility tab - _evaluateVisibility called this._evaluateCondition, which broke when borrowed by the editor via .call() since the editor has no copy of that method; now calls it as a plain function reference instead of through this
@@ -186,8 +187,10 @@ class ChronoPanelCardEditor extends HTMLElement {
       this._guiMode = true;
       this._innerTab = "config";
       this._collapsedConditions = {};
+      this._buildSkeleton();
     }
-    this._render();
+    this._updateTabStrip();
+    this._updateContent();
   }
 
   set hass(hass) {
@@ -210,17 +213,37 @@ class ChronoPanelCardEditor extends HTMLElement {
     );
   }
 
-  _render() {
+  // Built exactly once, on first setConfig. Never wiped afterward. Every
+  // later state change only updates the specific pieces below that are
+  // actually affected, instead of destroying and recreating everything -
+  // a real component (hui-card-picker, ha-yaml-editor, a child card's own
+  // editor) can otherwise get torn out from under itself mid-update,
+  // which is what previously crashed hui-card-picker during cut.
+  _buildSkeleton() {
     this.innerHTML = "";
-    const cards = this._config.cards;
-    const numCards = cards.length;
 
-    // Tab strip + add button
-    const toolbar = document.createElement("div");
-    toolbar.style.display = "flex";
-    toolbar.style.alignItems = "center";
-    toolbar.style.gap = "4px";
-    toolbar.style.marginBottom = "8px";
+    this._tabStripEl = document.createElement("div");
+    this._tabStripEl.style.display = "flex";
+    this._tabStripEl.style.alignItems = "center";
+    this._tabStripEl.style.gap = "4px";
+    this._tabStripEl.style.marginBottom = "8px";
+    this._tabStripEl.style.borderBottom = "1px solid #444";
+    this.appendChild(this._tabStripEl);
+
+    this._editorAreaEl = document.createElement("div");
+    this.appendChild(this._editorAreaEl);
+
+    this._cardToolbarEl = null; // created on demand inside _updateContent
+    this._innerTabsEl = null;
+    this._contentEl = null;
+  }
+
+  // Rebuilds only the tab strip (card-selector tabs + add button). Cheap,
+  // and the only thing inside it (plain buttons) is safe to fully replace
+  // every time - nothing here is a real, stateful third-party component.
+  _updateTabStrip() {
+    this._tabStripEl.innerHTML = "";
+    const cards = this._config.cards;
 
     cards.forEach((_card, i) => {
       const tab = document.createElement("button");
@@ -237,9 +260,10 @@ class ChronoPanelCardEditor extends HTMLElement {
         this._selected = i;
         this._guiMode = true;
         this._innerTab = "config";
-        this._render();
+        this._updateTabStrip();
+        this._updateContent();
       });
-      toolbar.appendChild(tab);
+      this._tabStripEl.appendChild(tab);
     });
 
     const addBtn = document.createElement("button");
@@ -253,168 +277,222 @@ class ChronoPanelCardEditor extends HTMLElement {
     addBtn.addEventListener("click", () => {
       this._selected = this._config.cards.length;
       this._innerTab = "config";
-      this._render();
+      this._updateTabStrip();
+      this._updateContent();
     });
-    toolbar.appendChild(addBtn);
-    toolbar.style.borderBottom = "1px solid #444";
-    this.appendChild(toolbar);
+    this._tabStripEl.appendChild(addBtn);
+  }
 
-    const editorArea = document.createElement("div");
-    this.appendChild(editorArea);
+  // Decides what belongs in the editor area below the tab strip, and only
+  // replaces the specific piece(s) that actually need to change for the
+  // current state, instead of wiping the whole area unconditionally.
+  _updateContent() {
+    const cards = this._config.cards;
+    const numCards = cards.length;
+    const showingCard = this._selected < numCards;
 
-    if (this._selected < numCards) {
-      // Per-card toolbar: move prev/next, copy, cut, delete
-      const iconBtn = (svgPath, onClick, disabled) => {
-        const btn = document.createElement("button");
-        btn.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="${svgPath}"/></svg>`;
-        btn.style.background = "none";
-        btn.style.border = "none";
-        btn.style.borderRadius = "50%";
-        btn.style.color = disabled ? "#555" : "#e1e1e1";
-        btn.style.cursor = disabled ? "default" : "pointer";
-        btn.style.padding = "4px";
-        btn.style.display = "flex";
-        btn.style.alignItems = "center";
-        btn.style.outline = "none";
-        btn.disabled = !!disabled;
-        btn.addEventListener("click", onClick);
-        btn.addEventListener("focus", () => { btn.style.outline = "2px solid var(--primary-color)"; });
-        btn.addEventListener("blur", () => { btn.style.outline = "none"; });
-        return btn;
-      };
+    if (!showingCard) {
+      // Past the end: only the picker belongs here. Tear down the
+      // card-toolbar/inner-tabs if they exist from a previous state,
+      // since they don't apply on this screen.
+      if (this._cardToolbarEl) { this._cardToolbarEl.remove(); this._cardToolbarEl = null; }
+      if (this._innerTabsEl) { this._innerTabsEl.remove(); this._innerTabsEl = null; }
+      this._mountPicker();
+      return;
+    }
 
-      const ICONS = {
-        prev: "M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z",
-        next: "M4,11V13H16L10.5,18.5L11.92,19.92L19.84,12L11.92,4.08L10.5,5.5L16,11H4Z",
-        copy: "M19,21H8V7H19M19,5H8A2,2 0 0,0 6,7V21A2,2 0 0,0 8,23H19A2,2 0 0,0 21,21V7A2,2 0 0,0 19,5M16,1H4A2,2 0 0,0 2,3V17H4V3H16V1Z",
-        cut: "M9.64,7.64C9.88,7.14 10,6.59 10,6A4,4 0 0,0 6,2A4,4 0 0,0 2,6A4,4 0 0,0 6,10C6.59,10 7.14,9.88 7.64,9.64L10,12L7.64,14.36C7.14,14.12 6.59,14 6,14A4,4 0 0,0 2,18A4,4 0 0,0 6,22A4,4 0 0,0 10,18C10,17.41 9.88,16.86 9.64,16.36L12,14L19,21H22V20L9.64,7.64M6,8A2,2 0 0,1 4,6A2,2 0 0,1 6,4A2,2 0 0,1 8,6A2,2 0 0,1 6,8M6,20A2,2 0 0,1 4,18A2,2 0 0,1 6,16A2,2 0 0,1 8,18A2,2 0 0,1 6,20M19,3L12,10L14,12L22,4V3H19Z",
-        delete: "M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z",
-        code: "M8,3A2,2 0 0,0 6,5V9A2,2 0 0,1 4,11H3V13H4A2,2 0 0,1 6,15V19A2,2 0 0,0 8,21H10V19H8V14A2,2 0 0,0 6,12A2,2 0 0,0 8,10V5H10V3M16,3A2,2 0 0,1 18,5V9A2,2 0 0,0 20,11H21V13H20A2,2 0 0,0 18,15V19A2,2 0 0,1 16,21H14V19H16V14A2,2 0 0,1 18,12A2,2 0 0,1 16,10V5H14V3H16Z",
-        list: "M3,4H7V8H3V4M9,5V7H21V5H9M3,10H7V14H3V10M9,11V13H21V11H9M3,16H7V20H3V16M9,17V19H21V17H9Z",
-      };
+    // Showing a selected card: ensure the card toolbar and inner tabs
+    // exist (build once if missing), then update them in place.
+    if (!this._cardToolbarEl) {
+      this._cardToolbarEl = document.createElement("div");
+      this._editorAreaEl.insertBefore(this._cardToolbarEl, this._editorAreaEl.firstChild);
+    }
+    this._updateCardToolbar();
 
-      const cardToolbar = document.createElement("div");
-      cardToolbar.style.display = "flex";
-      cardToolbar.style.justifyContent = "space-between";
-      cardToolbar.style.gap = "4px";
-      cardToolbar.style.marginBottom = "8px";
+    if (!this._innerTabsEl) {
+      this._innerTabsEl = document.createElement("div");
+      this._cardToolbarEl.after(this._innerTabsEl);
+    }
+    this._updateInnerTabs();
 
-      const codeBtn = iconBtn(this._guiMode ? ICONS.code : ICONS.list, () => {
-        this._guiMode = !this._guiMode;
-        this._render();
+    this._mountSelectedCardContent();
+  }
+
+  _updateCardToolbar() {
+    const numCards = this._config.cards.length;
+    this._cardToolbarEl.innerHTML = "";
+    this._cardToolbarEl.style.display = "flex";
+    this._cardToolbarEl.style.justifyContent = "space-between";
+    this._cardToolbarEl.style.gap = "4px";
+    this._cardToolbarEl.style.marginBottom = "8px";
+
+    const iconBtn = (svgPath, onClick, disabled) => {
+      const btn = document.createElement("button");
+      btn.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="${svgPath}"/></svg>`;
+      btn.style.background = "none";
+      btn.style.border = "none";
+      btn.style.borderRadius = "50%";
+      btn.style.color = disabled ? "#555" : "#e1e1e1";
+      btn.style.cursor = disabled ? "default" : "pointer";
+      btn.style.padding = "4px";
+      btn.style.display = "flex";
+      btn.style.alignItems = "center";
+      btn.style.outline = "none";
+      btn.disabled = !!disabled;
+      btn.addEventListener("click", onClick);
+      btn.addEventListener("focus", () => { btn.style.outline = "2px solid var(--primary-color)"; });
+      btn.addEventListener("blur", () => { btn.style.outline = "none"; });
+      return btn;
+    };
+
+    const ICONS = {
+      prev: "M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z",
+      next: "M4,11V13H16L10.5,18.5L11.92,19.92L19.84,12L11.92,4.08L10.5,5.5L16,11H4Z",
+      copy: "M19,21H8V7H19M19,5H8A2,2 0 0,0 6,7V21A2,2 0 0,0 8,23H19A2,2 0 0,0 21,21V7A2,2 0 0,0 19,5M16,1H4A2,2 0 0,0 2,3V17H4V3H16V1Z",
+      cut: "M9.64,7.64C9.88,7.14 10,6.59 10,6A4,4 0 0,0 6,2A4,4 0 0,0 2,6A4,4 0 0,0 6,10C6.59,10 7.14,9.88 7.64,9.64L10,12L7.64,14.36C7.14,14.12 6.59,14 6,14A4,4 0 0,0 2,18A4,4 0 0,0 6,22A4,4 0 0,0 10,18C10,17.41 9.88,16.86 9.64,16.36L12,14L19,21H22V20L9.64,7.64M6,8A2,2 0 0,1 4,6A2,2 0 0,1 6,4A2,2 0 0,1 8,6A2,2 0 0,1 6,8M6,20A2,2 0 0,1 4,18A2,2 0 0,1 6,16A2,2 0 0,1 8,18A2,2 0 0,1 6,20M19,3L12,10L14,12L22,4V3H19Z",
+      delete: "M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z",
+      code: "M8,3A2,2 0 0,0 6,5V9A2,2 0 0,1 4,11H3V13H4A2,2 0 0,1 6,15V19A2,2 0 0,0 8,21H10V19H8V14A2,2 0 0,0 6,12A2,2 0 0,0 8,10V5H10V3M16,3A2,2 0 0,1 18,5V9A2,2 0 0,0 20,11H21V13H20A2,2 0 0,0 18,15V19A2,2 0 0,1 16,21H14V19H16V14A2,2 0 0,1 18,12A2,2 0 0,1 16,10V5H14V3H16Z",
+      list: "M3,4H7V8H3V4M9,5V7H21V5H9M3,10H7V14H3V10M9,11V13H21V11H9M3,16H7V20H3V16M9,17V19H21V17H9Z",
+    };
+
+    const codeBtn = iconBtn(this._guiMode ? ICONS.code : ICONS.list, () => {
+      this._guiMode = !this._guiMode;
+      this._updateCardToolbar();
+      this._mountSelectedCardContent();
+    });
+    this._cardToolbarEl.appendChild(codeBtn);
+
+    const rightButtons = document.createElement("div");
+    rightButtons.style.display = "flex";
+    rightButtons.style.gap = "4px";
+    rightButtons.appendChild(iconBtn(ICONS.prev, () => this._move(-1), this._selected === 0));
+    rightButtons.appendChild(iconBtn(ICONS.next, () => this._move(1), this._selected === numCards - 1));
+    rightButtons.appendChild(iconBtn(ICONS.copy, () => this._copy()));
+    rightButtons.appendChild(iconBtn(ICONS.cut, () => this._cut()));
+    rightButtons.appendChild(iconBtn(ICONS.delete, () => this._delete()));
+    this._cardToolbarEl.appendChild(rightButtons);
+  }
+
+  _updateInnerTabs() {
+    this._innerTabsEl.innerHTML = "";
+    this._innerTabsEl.style.display = "flex";
+    this._innerTabsEl.style.borderBottom = "1px solid #444";
+    this._innerTabsEl.style.marginBottom = "12px";
+
+    ["config", "visibility"].forEach((tabId) => {
+      const tabBtn = document.createElement("button");
+      tabBtn.textContent = tabId === "config" ? "Config" : "Visibility";
+      const active = this._innerTab === tabId;
+      tabBtn.style.flex = "1";
+      tabBtn.style.background = "none";
+      tabBtn.style.border = "none";
+      tabBtn.style.borderBottom = active ? "2px solid var(--primary-color)" : "2px solid transparent";
+      tabBtn.style.color = active ? "var(--primary-color)" : "#e1e1e1";
+      tabBtn.style.fontWeight = "500";
+      tabBtn.style.padding = "10px 0";
+      tabBtn.style.cursor = "pointer";
+      tabBtn.addEventListener("click", () => {
+        this._innerTab = tabId;
+        this._updateInnerTabs();
+        this._mountSelectedCardContent();
       });
-      cardToolbar.appendChild(codeBtn);
+      this._innerTabsEl.appendChild(tabBtn);
+    });
+  }
 
-      const rightButtons = document.createElement("div");
-      rightButtons.style.display = "flex";
-      rightButtons.style.gap = "4px";
-      rightButtons.appendChild(iconBtn(ICONS.prev, () => this._move(-1), this._selected === 0));
-      rightButtons.appendChild(iconBtn(ICONS.next, () => this._move(1), this._selected === numCards - 1));
-      rightButtons.appendChild(iconBtn(ICONS.copy, () => this._copy()));
-      rightButtons.appendChild(iconBtn(ICONS.cut, () => this._cut()));
-      rightButtons.appendChild(iconBtn(ICONS.delete, () => this._delete()));
-      cardToolbar.appendChild(rightButtons);
+  // Replaces only the actual content area (child editor / YAML editor /
+  // visibility editor) - never touches the tab strip, card toolbar, or
+  // inner tabs above it. This is the one place a full child-replacement
+  // is correct: swapping between these is a genuine content change, not
+  // busywork on something that didn't change.
+  _mountSelectedCardContent() {
+    if (this._contentEl) {
+      this._contentEl.remove();
+    }
+    this._contentEl = document.createElement("div");
+    this._innerTabsEl.after(this._contentEl);
+    this._childEditorEl = null;
 
-      editorArea.appendChild(cardToolbar);
+    const cardConfig = this._config.cards[this._selected];
 
-      // Inner Config / Visibility tab pair (HA-style: blue underline on active)
-      const innerTabs = document.createElement("div");
-      innerTabs.style.display = "flex";
-      innerTabs.style.borderBottom = "1px solid #444";
-      innerTabs.style.marginBottom = "12px";
+    if (this._innerTab === "config" && this._guiMode) {
+      const target = this._contentEl;
+      const showFallback = (reason) => {
+        const fallback = document.createElement("div");
+        fallback.textContent =
+          "No visual editor available for this card type. Edit via YAML.";
+        target.appendChild(fallback);
+        console.warn("chrono-panel-card: child editor failed to load:", reason);
+      };
+      window.loadCardHelpers().then((helpers) => {
+        const tempEl = helpers.createCardElement(cardConfig);
+        const tagName = tempEl.localName;
 
-      ["config", "visibility"].forEach((tabId) => {
-        const tabBtn = document.createElement("button");
-        tabBtn.textContent = tabId === "config" ? "Config" : "Visibility";
-        const active = this._innerTab === tabId;
-        tabBtn.style.flex = "1";
-        tabBtn.style.background = "none";
-        tabBtn.style.border = "none";
-        tabBtn.style.borderBottom = active ? "2px solid var(--primary-color)" : "2px solid transparent";
-        tabBtn.style.color = active ? "var(--primary-color)" : "#e1e1e1";
-        tabBtn.style.fontWeight = "500";
-        tabBtn.style.padding = "10px 0";
-        tabBtn.style.cursor = "pointer";
-        tabBtn.addEventListener("click", () => {
-          this._innerTab = tabId;
-          this._render();
-        });
-        innerTabs.appendChild(tabBtn);
-      });
-      editorArea.appendChild(innerTabs);
-
-      // Selected child's own editor (Strategy 1: lazy-load-trigger the
-      // child's type, then call its own static getConfigElement()).
-      const cardConfig = cards[this._selected];
-
-      if (this._innerTab === "config" && this._guiMode) {
-        const showFallback = (reason) => {
-          const fallback = document.createElement("div");
-          fallback.textContent =
-            "No visual editor available for this card type. Edit via YAML.";
-          editorArea.appendChild(fallback);
-          console.warn("chrono-panel-card: child editor failed to load:", reason);
-        };
-        window.loadCardHelpers().then((helpers) => {
-          const tempEl = helpers.createCardElement(cardConfig);
-          const tagName = tempEl.localName;
-
-          customElements.whenDefined(tagName).then(() => {
-            const ElClass = customElements.get(tagName);
-            if (!ElClass || typeof ElClass.getConfigElement !== "function") {
-              showFallback("card type has no getConfigElement()");
-              return;
-            }
-            Promise.resolve(ElClass.getConfigElement()).then((editorEl) => {
-              editorEl.hass = this._hass;
-              editorEl.lovelace = this._lovelace;
-              editorEl.setConfig(cardConfig);
-              editorEl.addEventListener("config-changed", (ev) => {
-                ev.stopPropagation();
-                const updatedCards = [...this._config.cards];
-                const visibility = updatedCards[this._selected].visibility;
-                updatedCards[this._selected] = { ...ev.detail.config, visibility };
-                this._config = { ...this._config, cards: updatedCards };
-                this._fireConfigChanged();
-              });
-              this._childEditorEl = editorEl;
-              editorArea.appendChild(editorEl);
-            }).catch(showFallback);
+        customElements.whenDefined(tagName).then(() => {
+          const ElClass = customElements.get(tagName);
+          if (!ElClass || typeof ElClass.getConfigElement !== "function") {
+            showFallback("card type has no getConfigElement()");
+            return;
+          }
+          Promise.resolve(ElClass.getConfigElement()).then((editorEl) => {
+            editorEl.hass = this._hass;
+            editorEl.lovelace = this._lovelace;
+            editorEl.setConfig(cardConfig);
+            editorEl.addEventListener("config-changed", (ev) => {
+              ev.stopPropagation();
+              const updatedCards = [...this._config.cards];
+              const visibility = updatedCards[this._selected].visibility;
+              updatedCards[this._selected] = { ...ev.detail.config, visibility };
+              this._config = { ...this._config, cards: updatedCards };
+              this._fireConfigChanged();
+            });
+            this._childEditorEl = editorEl;
+            target.appendChild(editorEl);
           }).catch(showFallback);
         }).catch(showFallback);
-      } else if (this._innerTab === "config" && !this._guiMode) {
-        const yamlEl = document.createElement("ha-yaml-editor");
-        yamlEl.hass = this._hass;
-        yamlEl.autoUpdate = true;
-        yamlEl.value = cardConfig;
-        yamlEl.addEventListener("value-changed", (ev) => {
-          ev.stopPropagation();
-          if (!ev.detail.isValid) return; // don't commit invalid YAML
-          const updatedCards = [...this._config.cards];
-          const visibility = updatedCards[this._selected].visibility;
-          updatedCards[this._selected] = { ...ev.detail.value, visibility };
-          this._config = { ...this._config, cards: updatedCards };
-          this._fireConfigChanged();
-        });
-        editorArea.appendChild(yamlEl);
-      } else {
-        editorArea.appendChild(this._renderVisibilityEditor(cardConfig));
-      }
-    } else {
-      // Past the end: show HA's native card-type picker to add a new card.
-      const picker = document.createElement("hui-card-picker");
-      picker.hass = this._hass;
-      picker.lovelace = this._lovelace;
-      picker.addEventListener("config-changed", (ev) => {
+      }).catch(showFallback);
+    } else if (this._innerTab === "config" && !this._guiMode) {
+      const yamlEl = document.createElement("ha-yaml-editor");
+      yamlEl.hass = this._hass;
+      yamlEl.autoUpdate = true;
+      yamlEl.value = cardConfig;
+      yamlEl.addEventListener("value-changed", (ev) => {
         ev.stopPropagation();
-        const updatedCards = [...this._config.cards, ev.detail.config];
+        if (!ev.detail.isValid) return; // don't commit invalid YAML
+        const updatedCards = [...this._config.cards];
+        const visibility = updatedCards[this._selected].visibility;
+        updatedCards[this._selected] = { ...ev.detail.value, visibility };
         this._config = { ...this._config, cards: updatedCards };
         this._fireConfigChanged();
-        this._render();
       });
-      this._pickerEl = picker;
-      editorArea.appendChild(picker);
+      this._contentEl.appendChild(yamlEl);
+    } else {
+      this._contentEl.appendChild(this._renderVisibilityEditor(cardConfig));
     }
+  }
+
+  // Mounts the real hui-card-picker for the "past the end" / add-card
+  // screen. Only replaces _contentEl - never touches the tab strip.
+  _mountPicker() {
+    if (this._contentEl) {
+      this._contentEl.remove();
+    }
+    this._contentEl = document.createElement("div");
+    this._editorAreaEl.appendChild(this._contentEl);
+
+    const picker = document.createElement("hui-card-picker");
+    picker.hass = this._hass;
+    picker.lovelace = this._lovelace;
+    picker.addEventListener("config-changed", (ev) => {
+      ev.stopPropagation();
+      const updatedCards = [...this._config.cards, ev.detail.config];
+      this._config = { ...this._config, cards: updatedCards };
+      this._fireConfigChanged();
+      this._updateTabStrip();
+      this._updateContent();
+    });
+    this._pickerEl = picker;
+    this._contentEl.appendChild(picker);
   }
 
   _openPopup(el) {
@@ -651,7 +729,7 @@ class ChronoPanelCardEditor extends HTMLElement {
 
     header.addEventListener("click", () => {
       this._collapsedConditions[index] = !collapsed;
-      this._render();
+      this._mountSelectedCardContent();
     });
     card.appendChild(header);
 
@@ -695,7 +773,7 @@ class ChronoPanelCardEditor extends HTMLElement {
     updatedCards[this._selected] = { ...cardConfig, visibility: conditions };
     this._config = { ...this._config, cards: updatedCards };
     this._fireConfigChanged();
-    this._render();
+    this._mountSelectedCardContent();
   }
 
 
@@ -706,7 +784,9 @@ class ChronoPanelCardEditor extends HTMLElement {
     this._config = { ...this._config, cards };
     this._selected += delta;
     this._fireConfigChanged();
-    this._render();
+    this._updateTabStrip();
+    this._updateCardToolbar();
+    this._mountSelectedCardContent();
   }
 
   _copy() {
@@ -727,7 +807,8 @@ class ChronoPanelCardEditor extends HTMLElement {
     this._config = { ...this._config, cards };
     this._selected = Math.max(0, this._selected - 1);
     this._fireConfigChanged();
-    this._render();
+    this._updateTabStrip();
+    this._updateContent();
   }
 }
 
