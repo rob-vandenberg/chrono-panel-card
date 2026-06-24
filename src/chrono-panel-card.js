@@ -12,9 +12,10 @@
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.0.9';
+const CARD_VERSION = '1.0.10';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.0.10: Added per-child visibility condition editor (state/numeric_state, add/remove)
 // v1.0.9: Added error handling to child editor load chain so a failure (e.g. invalid existing config) shows a fallback message instead of a blank editor area
 // v1.0.8: Fixed crash when a child card's getConfigElement() returns sync instead of a Promise
 // v1.0.7: Fixed console banner text (SLIDESHOW -> PANEL)
@@ -279,7 +280,8 @@ class ChronoPanelCardEditor extends HTMLElement {
             editorEl.addEventListener("config-changed", (ev) => {
               ev.stopPropagation();
               const updatedCards = [...this._config.cards];
-              updatedCards[this._selected] = ev.detail.config;
+              const visibility = updatedCards[this._selected].visibility;
+              updatedCards[this._selected] = { ...ev.detail.config, visibility };
               this._config = { ...this._config, cards: updatedCards };
               this._fireConfigChanged();
             });
@@ -288,6 +290,8 @@ class ChronoPanelCardEditor extends HTMLElement {
           }).catch(showFallback);
         }).catch(showFallback);
       }).catch(showFallback);
+
+      editorArea.appendChild(this._renderVisibilityEditor(cardConfig));
     } else {
       // Past the end: show HA's native card-type picker to add a new card.
       const picker = document.createElement("hui-card-picker");
@@ -304,6 +308,167 @@ class ChronoPanelCardEditor extends HTMLElement {
       editorArea.appendChild(picker);
     }
   }
+
+  _renderVisibilityEditor(cardConfig) {
+    const container = document.createElement("div");
+    container.style.marginTop = "16px";
+    container.style.paddingTop = "12px";
+    container.style.borderTop = "1px solid #444";
+
+    const heading = document.createElement("div");
+    heading.textContent = "Visibility";
+    heading.style.fontWeight = "bold";
+    heading.style.marginBottom = "8px";
+    container.appendChild(heading);
+
+    const conditions = cardConfig.visibility || [];
+
+    const status = document.createElement("div");
+    status.textContent = conditions.length === 0
+      ? "Visible"
+      : "Visible only when all conditions below are met";
+    status.style.padding = "6px 10px";
+    status.style.marginBottom = "8px";
+    status.style.borderRadius = "4px";
+    status.style.background = conditions.length === 0 ? "#1b2e1b" : "#332b14";
+    status.style.color = conditions.length === 0 ? "#8bc88b" : "#d9a93b";
+    container.appendChild(status);
+
+    conditions.forEach((cond, i) => {
+      container.appendChild(this._renderConditionCard(cond, i));
+    });
+
+    const addRow = document.createElement("div");
+    addRow.style.display = "flex";
+    addRow.style.gap = "8px";
+    addRow.style.marginTop = "8px";
+
+    const typeSelect = document.createElement("select");
+    ["state", "numeric_state"].forEach((t) => {
+      const opt = document.createElement("option");
+      opt.value = t;
+      opt.textContent = t === "state" ? "Entity state" : "Entity numeric state";
+      typeSelect.appendChild(opt);
+    });
+    addRow.appendChild(typeSelect);
+
+    const addBtn = document.createElement("button");
+    addBtn.textContent = "+ Add condition";
+    addBtn.addEventListener("click", () => {
+      const newCond = typeSelect.value === "state"
+        ? { condition: "state", entity: "", state: "" }
+        : { condition: "numeric_state", entity: "" };
+      this._updateVisibility(cardConfig, [...conditions, newCond]);
+    });
+    addRow.appendChild(addBtn);
+
+    container.appendChild(addRow);
+    return container;
+  }
+
+  _renderConditionCard(cond, index) {
+    const card = document.createElement("div");
+    card.style.border = "1px solid #444";
+    card.style.borderRadius = "4px";
+    card.style.padding = "8px";
+    card.style.marginBottom = "8px";
+
+    const header = document.createElement("div");
+    header.style.display = "flex";
+    header.style.justifyContent = "space-between";
+    header.style.alignItems = "center";
+    header.style.marginBottom = "6px";
+
+    const label = document.createElement("span");
+    label.textContent = cond.condition === "state" ? "Entity state" : "Entity numeric state";
+    label.style.fontWeight = "bold";
+    header.appendChild(label);
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.textContent = "🗑";
+    deleteBtn.addEventListener("click", () => this._removeCondition(index));
+    header.appendChild(deleteBtn);
+
+    card.appendChild(header);
+
+    const entityInput = document.createElement("input");
+    entityInput.type = "text";
+    entityInput.placeholder = "Entity id (e.g. sensor.temperature)";
+    entityInput.value = cond.entity || "";
+    entityInput.style.width = "100%";
+    entityInput.style.boxSizing = "border-box";
+    entityInput.style.marginBottom = "6px";
+    entityInput.addEventListener("change", () => {
+      this._patchCondition(index, { entity: entityInput.value });
+    });
+    card.appendChild(entityInput);
+
+    if (cond.condition === "state") {
+      const stateInput = document.createElement("input");
+      stateInput.type = "text";
+      stateInput.placeholder = "State value";
+      stateInput.value = cond.state || "";
+      stateInput.style.width = "100%";
+      stateInput.style.boxSizing = "border-box";
+      stateInput.addEventListener("change", () => {
+        this._patchCondition(index, { state: stateInput.value });
+      });
+      card.appendChild(stateInput);
+    } else {
+      const row = document.createElement("div");
+      row.style.display = "flex";
+      row.style.gap = "8px";
+
+      const aboveInput = document.createElement("input");
+      aboveInput.type = "number";
+      aboveInput.placeholder = "Above";
+      aboveInput.value = cond.above ?? "";
+      aboveInput.style.flex = "1";
+      aboveInput.addEventListener("change", () => {
+        const v = aboveInput.value === "" ? undefined : parseFloat(aboveInput.value);
+        this._patchCondition(index, { above: v });
+      });
+      row.appendChild(aboveInput);
+
+      const belowInput = document.createElement("input");
+      belowInput.type = "number";
+      belowInput.placeholder = "Below";
+      belowInput.value = cond.below ?? "";
+      belowInput.style.flex = "1";
+      belowInput.addEventListener("change", () => {
+        const v = belowInput.value === "" ? undefined : parseFloat(belowInput.value);
+        this._patchCondition(index, { below: v });
+      });
+      row.appendChild(belowInput);
+
+      card.appendChild(row);
+    }
+
+    return card;
+  }
+
+  _patchCondition(index, patch) {
+    const cardConfig = this._config.cards[this._selected];
+    const conditions = [...(cardConfig.visibility || [])];
+    conditions[index] = { ...conditions[index], ...patch };
+    this._updateVisibility(cardConfig, conditions);
+  }
+
+  _removeCondition(index) {
+    const cardConfig = this._config.cards[this._selected];
+    const conditions = [...(cardConfig.visibility || [])];
+    conditions.splice(index, 1);
+    this._updateVisibility(cardConfig, conditions);
+  }
+
+  _updateVisibility(cardConfig, conditions) {
+    const updatedCards = [...this._config.cards];
+    updatedCards[this._selected] = { ...cardConfig, visibility: conditions };
+    this._config = { ...this._config, cards: updatedCards };
+    this._fireConfigChanged();
+    this._render();
+  }
+
 
   _move(delta) {
     const cards = [...this._config.cards];
