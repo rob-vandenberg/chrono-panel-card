@@ -12,9 +12,10 @@
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.0.17';
+const CARD_VERSION = '1.0.18';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.0.18: Fixed visibility banner to actually evaluate conditions against real entity state instead of only checking if the list is empty
 // v1.0.17: Use HA's real expansion-panel chevron icon for the condition card collapse arrow
 // v1.0.16: Use HA's real ha-card-condition-state / ha-card-condition-numeric_state components for condition fields instead of hand-built inputs
 // v1.0.15: Restyled visibility condition editor to match HA's native look (collapsible cards, icon+dot badge, three-dot menu, pill add button with dropdown)
@@ -396,6 +397,26 @@ class ChronoPanelCardEditor extends HTMLElement {
     }
   }
 
+  _evaluateConditions(conditions) {
+    if (!this._hass) return true; // no data yet, assume visible rather than guess wrong
+    return conditions.every((cond) => {
+      if (cond.condition === "state") {
+        const entityState = this._hass.states[cond.entity]?.state;
+        if (cond.state !== undefined) return entityState === cond.state;
+        if (cond.state_not !== undefined) return entityState !== cond.state_not;
+        return true;
+      }
+      if (cond.condition === "numeric_state") {
+        const value = parseFloat(this._hass.states[cond.entity]?.state);
+        if (isNaN(value)) return false;
+        if (cond.above !== undefined && !(value > cond.above)) return false;
+        if (cond.below !== undefined && !(value < cond.below)) return false;
+        return true;
+      }
+      return true;
+    });
+  }
+
   _renderVisibilityEditor(cardConfig) {
     const container = document.createElement("div");
 
@@ -409,7 +430,7 @@ class ChronoPanelCardEditor extends HTMLElement {
     status.style.marginBottom = "12px";
     status.style.borderRadius = "8px";
 
-    const visible = conditions.length === 0;
+    const visible = conditions.length === 0 || this._evaluateConditions(conditions);
     status.style.background = visible ? "#1f3322" : "#332b14";
 
     const dot = document.createElement("span");
@@ -501,10 +522,12 @@ class ChronoPanelCardEditor extends HTMLElement {
 
   _renderConditionCard(cond, index) {
     const TYPE_INFO = {
-      state: { label: "Entity state", icon: "M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6L8,12L12,18L16,12L12,6Z", dot: "#4caf50" },
-      numeric_state: { label: "Entity numeric state", icon: "M3,3H21V5H3V3M3,7H21V9H3V7M3,11H21V13H3V11M3,15H21V17H3V15M3,19H21V21H3V19Z", dot: "#4caf50" },
+      state: { label: "Entity state", icon: "M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6L8,12L12,18L16,12L12,6Z" },
+      numeric_state: { label: "Entity numeric state", icon: "M3,3H21V5H3V3M3,7H21V9H3V7M3,11H21V13H3V11M3,15H21V17H3V15M3,19H21V21H3V19Z" },
     };
-    const info = TYPE_INFO[cond.condition] || { label: cond.condition, icon: "", dot: "#888" };
+    const info = TYPE_INFO[cond.condition] || { label: cond.condition, icon: "" };
+    const conditionPasses = this._evaluateConditions([cond]);
+    const dotColor = conditionPasses ? "#4caf50" : "#ff9800";
     const collapsed = !!this._collapsedConditions[index];
 
     const card = document.createElement("div");
@@ -535,7 +558,7 @@ class ChronoPanelCardEditor extends HTMLElement {
     badge.style.width = "8px";
     badge.style.height = "8px";
     badge.style.borderRadius = "50%";
-    badge.style.background = info.dot;
+    badge.style.background = dotColor;
     iconWrap.appendChild(badge);
     header.appendChild(iconWrap);
 
