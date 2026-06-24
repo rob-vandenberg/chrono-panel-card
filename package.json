@@ -1,0 +1,10 @@
+{
+  "name": "chrono-panel-card",
+  "version": "1.0.0",
+  "scripts": {
+    "build": "terser src/chrono-panel-card.js -o dist/chrono-panel-card.js --compress --mangle"
+  },
+  "devDependencies": {
+    "terser": "^5.0.0"
+  }
+}
