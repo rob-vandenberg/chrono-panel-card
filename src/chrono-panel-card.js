@@ -12,9 +12,10 @@
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.0.4';
+const CARD_VERSION = '1.0.5';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.0.5: Added numeric_state condition support to _evaluateVisibility()
 // v1.0.4: Initial release
 
 console.info(
@@ -100,11 +101,23 @@ class ChronoPanelCard extends HTMLElement {
     if (!visibility) return true; // no visibility block => always show
 
     // Support the same array-of-conditions shape HA uses natively.
-    // Only the simple "state" condition type is implemented, on purpose.
+    // Only "state" and "numeric_state" condition types are implemented,
+    // on purpose. Other types: ignore, don't block (unknown types pass).
     return visibility.every((cond) => {
-      if (cond.condition !== "state") return true; // unknown types: ignore, don't block
-      const entityState = hass.states[cond.entity]?.state;
-      return entityState === cond.state;
+      if (cond.condition === "state") {
+        const entityState = hass.states[cond.entity]?.state;
+        return entityState === cond.state;
+      }
+
+      if (cond.condition === "numeric_state") {
+        const value = parseFloat(hass.states[cond.entity]?.state);
+        if (isNaN(value)) return false;
+        if (cond.above !== undefined && !(value > cond.above)) return false;
+        if (cond.below !== undefined && !(value < cond.below)) return false;
+        return true;
+      }
+
+      return true; // unknown types: ignore, don't block
     });
   }
 
