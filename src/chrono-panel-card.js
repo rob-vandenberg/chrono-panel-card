@@ -12,9 +12,10 @@
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.0.10';
+const CARD_VERSION = '1.0.11';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.0.11: Guarded customElements.define calls against duplicate-registration crash on duplicate resource load
 // v1.0.10: Added per-child visibility condition editor (state/numeric_state, add/remove)
 // v1.0.9: Added error handling to child editor load chain so a failure (e.g. invalid existing config) shows a fallback message instead of a blank editor area
 // v1.0.8: Fixed crash when a child card's getConfigElement() returns sync instead of a Promise
@@ -501,9 +502,13 @@ class ChronoPanelCardEditor extends HTMLElement {
   }
 }
 
-customElements.define("chrono-panel-card-editor", ChronoPanelCardEditor);
+if (!customElements.get("chrono-panel-card-editor")) {
+  customElements.define("chrono-panel-card-editor", ChronoPanelCardEditor);
+}
 
-customElements.define("chrono-panel-card", ChronoPanelCard);
+if (!customElements.get("chrono-panel-card")) {
+  customElements.define("chrono-panel-card", ChronoPanelCard);
+}
 
 
 
