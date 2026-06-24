@@ -12,9 +12,10 @@
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.0.12';
+const CARD_VERSION = '1.0.13';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.0.13: Added {} GUI/YAML toggle for the selected child's Config tab, using ha-yaml-editor
 // v1.0.12: Added inner Config/Visibility tabs per child (HA-style); restyled card-selector tabs and toolbar icons to match HA's look
 // v1.0.11: Guarded customElements.define calls against duplicate-registration crash on duplicate resource load
 // v1.0.10: Added per-child visibility condition editor (state/numeric_state, add/remove)
@@ -258,19 +259,35 @@ class ChronoPanelCardEditor extends HTMLElement {
         copy: "M19,21H8V7H19M19,5H8A2,2 0 0,0 6,7V21A2,2 0 0,0 8,23H19A2,2 0 0,0 21,21V7A2,2 0 0,0 19,5M16,1H4A2,2 0 0,0 2,3V17H4V3H16V1Z",
         cut: "M9.64,7.64C9.88,7.14 10,6.59 10,6A4,4 0 0,0 6,2A4,4 0 0,0 2,6A4,4 0 0,0 6,10C6.59,10 7.14,9.88 7.64,9.64L10,12L7.64,14.36C7.14,14.12 6.59,14 6,14A4,4 0 0,0 2,18A4,4 0 0,0 6,22A4,4 0 0,0 10,18C10,17.41 9.88,16.86 9.64,16.36L12,14L19,21H22V20L9.64,7.64M6,8A2,2 0 0,1 4,6A2,2 0 0,1 6,4A2,2 0 0,1 8,6A2,2 0 0,1 6,8M6,20A2,2 0 0,1 4,18A2,2 0 0,1 6,16A2,2 0 0,1 8,18A2,2 0 0,1 6,20M19,3L12,10L14,12L22,4V3H19Z",
         delete: "M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z",
+        code: "M8,3A2,2 0 0,0 6,5V9A2,2 0 0,1 4,11H3V13H4A2,2 0 0,1 6,15V19A2,2 0 0,0 8,21H10V19H8V14A2,2 0 0,0 6,12A2,2 0 0,0 8,10V5H10V3M16,3A2,2 0 0,1 18,5V9A2,2 0 0,0 20,11H21V13H20A2,2 0 0,0 18,15V19A2,2 0 0,1 16,21H14V19H16V14A2,2 0 0,1 18,12A2,2 0 0,1 16,10V5H14V3H16Z",
       };
 
       const cardToolbar = document.createElement("div");
       cardToolbar.style.display = "flex";
-      cardToolbar.style.justifyContent = "flex-end";
+      cardToolbar.style.justifyContent = "space-between";
       cardToolbar.style.gap = "4px";
       cardToolbar.style.marginBottom = "8px";
 
-      cardToolbar.appendChild(iconBtn(ICONS.prev, () => this._move(-1), this._selected === 0));
-      cardToolbar.appendChild(iconBtn(ICONS.next, () => this._move(1), this._selected === numCards - 1));
-      cardToolbar.appendChild(iconBtn(ICONS.copy, () => this._copy()));
-      cardToolbar.appendChild(iconBtn(ICONS.cut, () => this._cut()));
-      cardToolbar.appendChild(iconBtn(ICONS.delete, () => this._delete()));
+      const codeBtn = iconBtn(ICONS.code, () => {
+        this._guiMode = !this._guiMode;
+        this._render();
+      });
+      if (!this._guiMode) {
+        codeBtn.style.border = "1px solid #03a9f4";
+        codeBtn.style.borderRadius = "50%";
+        codeBtn.style.color = "#03a9f4";
+      }
+      cardToolbar.appendChild(codeBtn);
+
+      const rightButtons = document.createElement("div");
+      rightButtons.style.display = "flex";
+      rightButtons.style.gap = "4px";
+      rightButtons.appendChild(iconBtn(ICONS.prev, () => this._move(-1), this._selected === 0));
+      rightButtons.appendChild(iconBtn(ICONS.next, () => this._move(1), this._selected === numCards - 1));
+      rightButtons.appendChild(iconBtn(ICONS.copy, () => this._copy()));
+      rightButtons.appendChild(iconBtn(ICONS.cut, () => this._cut()));
+      rightButtons.appendChild(iconBtn(ICONS.delete, () => this._delete()));
+      cardToolbar.appendChild(rightButtons);
 
       editorArea.appendChild(cardToolbar);
 
@@ -304,7 +321,7 @@ class ChronoPanelCardEditor extends HTMLElement {
       // child's type, then call its own static getConfigElement()).
       const cardConfig = cards[this._selected];
 
-      if (this._innerTab === "config") {
+      if (this._innerTab === "config" && this._guiMode) {
         const showFallback = (reason) => {
           const fallback = document.createElement("div");
           fallback.textContent =
@@ -339,6 +356,21 @@ class ChronoPanelCardEditor extends HTMLElement {
             }).catch(showFallback);
           }).catch(showFallback);
         }).catch(showFallback);
+      } else if (this._innerTab === "config" && !this._guiMode) {
+        const yamlEl = document.createElement("ha-yaml-editor");
+        yamlEl.hass = this._hass;
+        yamlEl.autoUpdate = true;
+        yamlEl.value = cardConfig;
+        yamlEl.addEventListener("value-changed", (ev) => {
+          ev.stopPropagation();
+          if (!ev.detail.isValid) return; // don't commit invalid YAML
+          const updatedCards = [...this._config.cards];
+          const visibility = updatedCards[this._selected].visibility;
+          updatedCards[this._selected] = { ...ev.detail.value, visibility };
+          this._config = { ...this._config, cards: updatedCards };
+          this._fireConfigChanged();
+        });
+        editorArea.appendChild(yamlEl);
       } else {
         editorArea.appendChild(this._renderVisibilityEditor(cardConfig));
       }
