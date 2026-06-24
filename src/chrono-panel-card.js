@@ -12,9 +12,11 @@
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.0.22';
+const CARD_VERSION = '1.0.24';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.0.24: Fixed "+ Add condition" button to use HA's exact real CSS variables for color, hover color, height, padding, and pill shape, found via devtools on a real ha-button
+// v1.0.23: Fixed chevron to rotate up/down (was rotating sideways); switched all hardcoded blue colors to HA's real --primary-color variable so they always match HA's actual theme color exactly
 // v1.0.22: Removed the empty-cards rejection entirely (matches vertical-stack's own behavior: zero cards is a normal starting state, not an error) - no more fake placeholder card needed; also: one shared close-any-open-popup mechanism instead of each menu/dropdown managing its own; dropdown rows stop click propagation; condition evaluation array no longer rebuilt every render
 // v1.0.21: Code review fixes - added state_not support to the one real evaluator and reused it from the editor (removed duplicate logic that could drift); editor no longer assumes visible when hass is missing; dropdown/menu close on outside click; getStubConfig now returns a valid non-empty config
 // v1.0.20: Fixed banner subtitle to correctly distinguish "no conditions set" from "conditions set and currently passing"
@@ -216,8 +218,8 @@ class ChronoPanelCardEditor extends HTMLElement {
       const active = i === this._selected;
       tab.style.background = "none";
       tab.style.border = "none";
-      tab.style.borderBottom = active ? "2px solid #03a9f4" : "2px solid transparent";
-      tab.style.color = active ? "#03a9f4" : "#e1e1e1";
+      tab.style.borderBottom = active ? "2px solid var(--primary-color)" : "2px solid transparent";
+      tab.style.color = active ? "var(--primary-color)" : "#e1e1e1";
       tab.style.fontWeight = active ? "600" : "400";
       tab.style.padding = "6px 10px";
       tab.style.cursor = "pointer";
@@ -266,7 +268,7 @@ class ChronoPanelCardEditor extends HTMLElement {
         btn.style.outline = "none";
         btn.disabled = !!disabled;
         btn.addEventListener("click", onClick);
-        btn.addEventListener("focus", () => { btn.style.outline = "2px solid #03a9f4"; });
+        btn.addEventListener("focus", () => { btn.style.outline = "2px solid var(--primary-color)"; });
         btn.addEventListener("blur", () => { btn.style.outline = "none"; });
         return btn;
       };
@@ -318,8 +320,8 @@ class ChronoPanelCardEditor extends HTMLElement {
         tabBtn.style.flex = "1";
         tabBtn.style.background = "none";
         tabBtn.style.border = "none";
-        tabBtn.style.borderBottom = active ? "2px solid #03a9f4" : "2px solid transparent";
-        tabBtn.style.color = active ? "#03a9f4" : "#e1e1e1";
+        tabBtn.style.borderBottom = active ? "2px solid var(--primary-color)" : "2px solid transparent";
+        tabBtn.style.color = active ? "var(--primary-color)" : "#e1e1e1";
         tabBtn.style.fontWeight = "500";
         tabBtn.style.padding = "10px 0";
         tabBtn.style.cursor = "pointer";
@@ -478,15 +480,16 @@ class ChronoPanelCardEditor extends HTMLElement {
 
     const addBtn = document.createElement("button");
     addBtn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" style="vertical-align:-3px;margin-right:6px;"><path fill="currentColor" d="M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z"/></svg>Add condition`;
-    addBtn.style.background = "#03a9f4";
+    addBtn.style.background = "var(--ha-color-fill-primary-loud-active)";
     addBtn.style.color = "#fff";
     addBtn.style.border = "none";
-    addBtn.style.borderRadius = "20px";
-    addBtn.style.padding = "8px 16px";
+    addBtn.style.borderRadius = "var(--ha-border-radius-pill)";
+    addBtn.style.height = "40px";
+    addBtn.style.padding = "0 var(--ha-space-4)";
     addBtn.style.fontWeight = "600";
     addBtn.style.cursor = "pointer";
-    addBtn.addEventListener("mouseenter", () => { addBtn.style.background = "#29b6f6"; });
-    addBtn.addEventListener("mouseleave", () => { addBtn.style.background = "#03a9f4"; });
+    addBtn.addEventListener("mouseenter", () => { addBtn.style.background = "var(--ha-color-fill-primary-loud-hover)"; });
+    addBtn.addEventListener("mouseleave", () => { addBtn.style.background = "var(--ha-color-fill-primary-loud-active)"; });
 
     const dropdown = document.createElement("div");
     dropdown.style.position = "absolute";
@@ -567,7 +570,7 @@ class ChronoPanelCardEditor extends HTMLElement {
     header.style.cursor = "pointer";
 
     const chevron = document.createElement("span");
-    chevron.innerHTML = `<svg viewBox="0 0 24 24" width="24" height="24" style="transform:rotate(${collapsed ? "-90deg" : "0deg"});transition:transform .15s;"><path fill="currentColor" d="M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z"/></svg>`;
+    chevron.innerHTML = `<svg viewBox="0 0 24 24" width="24" height="24" style="transform:rotate(${collapsed ? "180deg" : "0deg"});transition:transform .15s;"><path fill="currentColor" d="M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z"/></svg>`;
     header.appendChild(chevron);
 
     const iconWrap = document.createElement("span");
