@@ -12,9 +12,10 @@
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.0.8';
+const CARD_VERSION = '1.0.9';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.0.9: Added error handling to child editor load chain so a failure (e.g. invalid existing config) shows a fallback message instead of a blank editor area
 // v1.0.8: Fixed crash when a child card's getConfigElement() returns sync instead of a Promise
 // v1.0.7: Fixed console banner text (SLIDESHOW -> PANEL)
 // v1.0.6: Added visual editor (ChronoPanelCardEditor) - add/remove/reorder/copy/cut child cards
@@ -254,6 +255,13 @@ class ChronoPanelCardEditor extends HTMLElement {
       // Selected child's own editor (Strategy 1: lazy-load-trigger the
       // child's type, then call its own static getConfigElement()).
       const cardConfig = cards[this._selected];
+      const showFallback = (reason) => {
+        const fallback = document.createElement("div");
+        fallback.textContent =
+          "No visual editor available for this card type. Edit via YAML.";
+        editorArea.appendChild(fallback);
+        console.warn("chrono-panel-card: child editor failed to load:", reason);
+      };
       window.loadCardHelpers().then((helpers) => {
         const tempEl = helpers.createCardElement(cardConfig);
         const tagName = tempEl.localName;
@@ -261,10 +269,7 @@ class ChronoPanelCardEditor extends HTMLElement {
         customElements.whenDefined(tagName).then(() => {
           const ElClass = customElements.get(tagName);
           if (!ElClass || typeof ElClass.getConfigElement !== "function") {
-            const fallback = document.createElement("div");
-            fallback.textContent =
-              "No visual editor available for this card type. Edit via YAML.";
-            editorArea.appendChild(fallback);
+            showFallback("card type has no getConfigElement()");
             return;
           }
           Promise.resolve(ElClass.getConfigElement()).then((editorEl) => {
@@ -280,9 +285,9 @@ class ChronoPanelCardEditor extends HTMLElement {
             });
             this._childEditorEl = editorEl;
             editorArea.appendChild(editorEl);
-          });
-        });
-      });
+          }).catch(showFallback);
+        }).catch(showFallback);
+      }).catch(showFallback);
     } else {
       // Past the end: show HA's native card-type picker to add a new card.
       const picker = document.createElement("hui-card-picker");
