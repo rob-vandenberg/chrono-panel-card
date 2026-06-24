@@ -12,9 +12,10 @@
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.0.16';
+const CARD_VERSION = '1.0.17';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.0.17: Use HA's real expansion-panel chevron icon for the condition card collapse arrow
 // v1.0.16: Use HA's real ha-card-condition-state / ha-card-condition-numeric_state components for condition fields instead of hand-built inputs
 // v1.0.15: Restyled visibility condition editor to match HA's native look (collapsible cards, icon+dot badge, three-dot menu, pill add button with dropdown)
 // v1.0.14: Fixed code/visual toggle icon to swap glyph (braces/list) instead of drawing a border; use native focus outline
@@ -520,7 +521,7 @@ class ChronoPanelCardEditor extends HTMLElement {
     header.style.cursor = "pointer";
 
     const chevron = document.createElement("span");
-    chevron.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" style="transform:rotate(${collapsed ? "-90deg" : "0deg"});transition:transform .15s;"><path fill="currentColor" d="M7,10L12,15L17,10H7Z"/></svg>`;
+    chevron.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" style="transform:rotate(${collapsed ? "-90deg" : "0deg"});transition:transform .15s;"><path fill="currentColor" d="M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z"/></svg>`;
     header.appendChild(chevron);
 
     const iconWrap = document.createElement("span");
