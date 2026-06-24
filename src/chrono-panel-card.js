@@ -12,9 +12,10 @@
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.0.18';
+const CARD_VERSION = '1.0.19';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.0.19: Fixed chevron icon size to match HA's actual size (was using the right shape but the old, too-small dimensions)
 // v1.0.18: Fixed visibility banner to actually evaluate conditions against real entity state instead of only checking if the list is empty
 // v1.0.17: Use HA's real expansion-panel chevron icon for the condition card collapse arrow
 // v1.0.16: Use HA's real ha-card-condition-state / ha-card-condition-numeric_state components for condition fields instead of hand-built inputs
@@ -544,7 +545,7 @@ class ChronoPanelCardEditor extends HTMLElement {
     header.style.cursor = "pointer";
 
     const chevron = document.createElement("span");
-    chevron.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18" style="transform:rotate(${collapsed ? "-90deg" : "0deg"});transition:transform .15s;"><path fill="currentColor" d="M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z"/></svg>`;
+    chevron.innerHTML = `<svg viewBox="0 0 24 24" width="24" height="24" style="transform:rotate(${collapsed ? "-90deg" : "0deg"});transition:transform .15s;"><path fill="currentColor" d="M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z"/></svg>`;
     header.appendChild(chevron);
 
     const iconWrap = document.createElement("span");
