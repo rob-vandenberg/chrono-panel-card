@@ -12,9 +12,10 @@
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.0.26';
+const CARD_VERSION = '1.0.27';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.0.27: Fixed Copy/Cut to actually do something useful - now writes to the same sessionStorage key (dashboardCardClipboard) hui-card-picker itself already reads, so the real "paste from clipboard" tile appears automatically in the existing add-card screen; previously copy wrote to an unused in-memory field nothing ever read back
 // v1.0.26: Fixed add-condition button colors to use the correct "filled" appearance variables (var(--wa-color-fill-normal) / var(--ha-color-fill-primary-normal-hover)) instead of the "accent/loud" ones, found via ha-button's real source; fixed editor jumping back to Config tab on every condition edit (setConfig now only resets tab/selection state on true first load, not on re-calls echoing our own config-changed)
 // v1.0.25: Fixed crash in the Visibility tab - _evaluateVisibility called this._evaluateCondition, which broke when borrowed by the editor via .call() since the editor has no copy of that method; now calls it as a plain function reference instead of through this
 // v1.0.24: Fixed "+ Add condition" button to use HA's exact real CSS variables for color, hover color, height, padding, and pill shape, found via devtools on a real ha-button
@@ -709,7 +710,8 @@ class ChronoPanelCardEditor extends HTMLElement {
   }
 
   _copy() {
-    this._clipboard = JSON.parse(
+    sessionStorage.setItem(
+      "dashboardCardClipboard",
       JSON.stringify(this._config.cards[this._selected])
     );
   }
