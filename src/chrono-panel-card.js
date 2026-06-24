@@ -12,9 +12,10 @@
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.0.13';
+const CARD_VERSION = '1.0.14';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.0.14: Fixed code/visual toggle icon to swap glyph (braces/list) instead of drawing a border; use native focus outline
 // v1.0.13: Added {} GUI/YAML toggle for the selected child's Config tab, using ha-yaml-editor
 // v1.0.12: Added inner Config/Visibility tabs per child (HA-style); restyled card-selector tabs and toolbar icons to match HA's look
 // v1.0.11: Guarded customElements.define calls against duplicate-registration crash on duplicate resource load
@@ -243,13 +244,17 @@ class ChronoPanelCardEditor extends HTMLElement {
         btn.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="${svgPath}"/></svg>`;
         btn.style.background = "none";
         btn.style.border = "none";
+        btn.style.borderRadius = "50%";
         btn.style.color = disabled ? "#555" : "#e1e1e1";
         btn.style.cursor = disabled ? "default" : "pointer";
         btn.style.padding = "4px";
         btn.style.display = "flex";
         btn.style.alignItems = "center";
+        btn.style.outline = "none";
         btn.disabled = !!disabled;
         btn.addEventListener("click", onClick);
+        btn.addEventListener("focus", () => { btn.style.outline = "2px solid #03a9f4"; });
+        btn.addEventListener("blur", () => { btn.style.outline = "none"; });
         return btn;
       };
 
@@ -260,6 +265,7 @@ class ChronoPanelCardEditor extends HTMLElement {
         cut: "M9.64,7.64C9.88,7.14 10,6.59 10,6A4,4 0 0,0 6,2A4,4 0 0,0 2,6A4,4 0 0,0 6,10C6.59,10 7.14,9.88 7.64,9.64L10,12L7.64,14.36C7.14,14.12 6.59,14 6,14A4,4 0 0,0 2,18A4,4 0 0,0 6,22A4,4 0 0,0 10,18C10,17.41 9.88,16.86 9.64,16.36L12,14L19,21H22V20L9.64,7.64M6,8A2,2 0 0,1 4,6A2,2 0 0,1 6,4A2,2 0 0,1 8,6A2,2 0 0,1 6,8M6,20A2,2 0 0,1 4,18A2,2 0 0,1 6,16A2,2 0 0,1 8,18A2,2 0 0,1 6,20M19,3L12,10L14,12L22,4V3H19Z",
         delete: "M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z",
         code: "M8,3A2,2 0 0,0 6,5V9A2,2 0 0,1 4,11H3V13H4A2,2 0 0,1 6,15V19A2,2 0 0,0 8,21H10V19H8V14A2,2 0 0,0 6,12A2,2 0 0,0 8,10V5H10V3M16,3A2,2 0 0,1 18,5V9A2,2 0 0,0 20,11H21V13H20A2,2 0 0,0 18,15V19A2,2 0 0,1 16,21H14V19H16V14A2,2 0 0,1 18,12A2,2 0 0,1 16,10V5H14V3H16Z",
+        list: "M3,4H7V8H3V4M9,5V7H21V5H9M3,10H7V14H3V10M9,11V13H21V11H9M3,16H7V20H3V16M9,17V19H21V17H9Z",
       };
 
       const cardToolbar = document.createElement("div");
@@ -268,15 +274,10 @@ class ChronoPanelCardEditor extends HTMLElement {
       cardToolbar.style.gap = "4px";
       cardToolbar.style.marginBottom = "8px";
 
-      const codeBtn = iconBtn(ICONS.code, () => {
+      const codeBtn = iconBtn(this._guiMode ? ICONS.code : ICONS.list, () => {
         this._guiMode = !this._guiMode;
         this._render();
       });
-      if (!this._guiMode) {
-        codeBtn.style.border = "1px solid #03a9f4";
-        codeBtn.style.borderRadius = "50%";
-        codeBtn.style.color = "#03a9f4";
-      }
       cardToolbar.appendChild(codeBtn);
 
       const rightButtons = document.createElement("div");
