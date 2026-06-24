@@ -12,9 +12,10 @@
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.0.15';
+const CARD_VERSION = '1.0.16';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.0.16: Use HA's real ha-card-condition-state / ha-card-condition-numeric_state components for condition fields instead of hand-built inputs
 // v1.0.15: Restyled visibility condition editor to match HA's native look (collapsible cards, icon+dot badge, three-dot menu, pill add button with dropdown)
 // v1.0.14: Fixed code/visual toggle icon to swap glyph (braces/list) instead of drawing a border; use native focus outline
 // v1.0.13: Added {} GUI/YAML toggle for the selected child's Config tab, using ha-yaml-editor
@@ -480,9 +481,9 @@ class ChronoPanelCardEditor extends HTMLElement {
       row.addEventListener("mouseleave", () => { row.style.background = "none"; });
       row.addEventListener("click", () => {
         const newCond = t.id === "state"
-          ? { condition: "state", entity: "", state: "" }
-          : { condition: "numeric_state", entity: "" };
-        this._updateVisibility(cardConfig, [...conditions, newCond]);
+          ? customElements.get("ha-card-condition-state").defaultConfig
+          : customElements.get("ha-card-condition-numeric_state").defaultConfig;
+        this._updateVisibility(cardConfig, [...conditions, { ...newCond }]);
       });
       dropdown.appendChild(row);
     });
@@ -592,76 +593,28 @@ class ChronoPanelCardEditor extends HTMLElement {
     if (!collapsed) {
       const body = document.createElement("div");
       body.style.padding = "0 12px 12px 12px";
-      body.appendChild(this._renderConditionFields(cond, index));
+
+      const tagName = cond.condition === "state"
+        ? "ha-card-condition-state"
+        : "ha-card-condition-numeric_state";
+      const condEl = document.createElement(tagName);
+      condEl.hass = this._hass;
+      condEl.condition = cond;
+      condEl.addEventListener("value-changed", (ev) => {
+        ev.stopPropagation();
+        this._setCondition(index, ev.detail.value);
+      });
+      body.appendChild(condEl);
       card.appendChild(body);
     }
 
     return card;
   }
 
-  _renderConditionFields(cond, index) {
-    const wrap = document.createElement("div");
-
-    const entityInput = document.createElement("input");
-    entityInput.type = "text";
-    entityInput.placeholder = "Entity id (e.g. sensor.temperature)";
-    entityInput.value = cond.entity || "";
-    entityInput.style.width = "100%";
-    entityInput.style.boxSizing = "border-box";
-    entityInput.style.marginBottom = "6px";
-    entityInput.addEventListener("change", () => {
-      this._patchCondition(index, { entity: entityInput.value });
-    });
-    wrap.appendChild(entityInput);
-
-    if (cond.condition === "state") {
-      const stateInput = document.createElement("input");
-      stateInput.type = "text";
-      stateInput.placeholder = "State value";
-      stateInput.value = cond.state || "";
-      stateInput.style.width = "100%";
-      stateInput.style.boxSizing = "border-box";
-      stateInput.addEventListener("change", () => {
-        this._patchCondition(index, { state: stateInput.value });
-      });
-      wrap.appendChild(stateInput);
-    } else {
-      const row = document.createElement("div");
-      row.style.display = "flex";
-      row.style.gap = "8px";
-
-      const aboveInput = document.createElement("input");
-      aboveInput.type = "number";
-      aboveInput.placeholder = "Above";
-      aboveInput.value = cond.above ?? "";
-      aboveInput.style.flex = "1";
-      aboveInput.addEventListener("change", () => {
-        const v = aboveInput.value === "" ? undefined : parseFloat(aboveInput.value);
-        this._patchCondition(index, { above: v });
-      });
-      row.appendChild(aboveInput);
-
-      const belowInput = document.createElement("input");
-      belowInput.type = "number";
-      belowInput.placeholder = "Below";
-      belowInput.value = cond.below ?? "";
-      belowInput.style.flex = "1";
-      belowInput.addEventListener("change", () => {
-        const v = belowInput.value === "" ? undefined : parseFloat(belowInput.value);
-        this._patchCondition(index, { below: v });
-      });
-      row.appendChild(belowInput);
-
-      wrap.appendChild(row);
-    }
-
-    return wrap;
-  }
-
-  _patchCondition(index, patch) {
+  _setCondition(index, newCondition) {
     const cardConfig = this._config.cards[this._selected];
     const conditions = [...(cardConfig.visibility || [])];
-    conditions[index] = { ...conditions[index], ...patch };
+    conditions[index] = newCondition;
     this._updateVisibility(cardConfig, conditions);
   }
 
