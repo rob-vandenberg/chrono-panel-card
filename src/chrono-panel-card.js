@@ -12,9 +12,10 @@
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.0.24';
+const CARD_VERSION = '1.0.25';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.0.25: Fixed crash in the Visibility tab - _evaluateVisibility called this._evaluateCondition, which broke when borrowed by the editor via .call() since the editor has no copy of that method; now calls it as a plain function reference instead of through this
 // v1.0.24: Fixed "+ Add condition" button to use HA's exact real CSS variables for color, hover color, height, padding, and pill shape, found via devtools on a real ha-button
 // v1.0.23: Fixed chevron to rotate up/down (was rotating sideways); switched all hardcoded blue colors to HA's real --primary-color variable so they always match HA's actual theme color exactly
 // v1.0.22: Removed the empty-cards rejection entirely (matches vertical-stack's own behavior: zero cards is a normal starting state, not an error) - no more fake placeholder card needed; also: one shared close-any-open-popup mechanism instead of each menu/dropdown managing its own; dropdown rows stop click propagation; condition evaluation array no longer rebuilt every render
@@ -130,7 +131,11 @@ class ChronoPanelCard extends HTMLElement {
     // Support the same array-of-conditions shape HA uses natively.
     // Only "state" and "numeric_state" condition types are implemented,
     // on purpose. Other types: ignore, don't block (unknown types pass).
-    return visibility.every((cond) => this._evaluateCondition(cond, hass));
+    // Calls the plain function reference, not this._evaluateCondition,
+    // so this still works correctly when borrowed via .call() from an
+    // object that isn't a ChronoPanelCard instance (see the editor's
+    // _evaluateConditions / _evaluateOneCondition).
+    return visibility.every((cond) => ChronoPanelCard.prototype._evaluateCondition(cond, hass));
   }
 
   _evaluateCondition(cond, hass) {
