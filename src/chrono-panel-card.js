@@ -1,3 +1,8 @@
+import { LitElement, html, css } from 'https://unpkg.com/lit@2.0.0/index.js?module';
+import { keyed }                 from 'https://unpkg.com/lit@2.0.0/directives/keyed.js?module';
+import { styleMap }              from 'https://unpkg.com/lit@2.0.0/directives/style-map.js?module';
+import { storage }               from 'https://unpkg.com/home-assistant-frontend@dev/src/common/decorators/storage.js?module';
+
 // chrono-panel-card.js
 // Bare-minimum container card for panel views.
 // - Fills 100% width/height of its parent (the panel).
@@ -12,9 +17,32 @@
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.1.35';
+const CARD_VERSION = '2.0.36';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v2.0.36: Full rewrite onto LitElement (was a hand-built HTMLElement-based
+//          card/editor). Editor's persistent-DOM-skeleton machinery
+//          (_buildSkeleton/_updateTabStrip/_updateCardToolbar/_updateInnerTabs/
+//          _mountSelectedCardContent/_mountPicker) replaced by a single
+//          render() using the keyed() directive, which gives the same
+//          "don't tear down a live component unless its key changes"
+//          guarantee Lit-natively, without manual DOM surgery. Child card's
+//          own editor is now mounted via HA's real hui-card-element-editor
+//          component directly, instead of our own hand-rolled
+//          loadCardHelpers()/getConfigElement() mounting chain - it handles
+//          that same lazy-load/fallback logic internally. Fixed the Copy/Cut
+//          clipboard bug: previous versions wrote directly via
+//          sessionStorage.setItem(), which never reached hui-card-picker's
+//          own in-memory cache (populated once via its @storage-decorated
+//          _clipboard property and never re-read from sessionStorage after
+//          that). Now writes through the same storage() decorator pattern
+//          hui-card-picker and HA's own hui-stack-card-editor use, so the
+//          write lands in the same singleton cache the picker reads from.
+//          All visibility-condition-editor visuals (banner colors, icons,
+//          badges, chevron direction, add-condition button styling) carried
+//          over unchanged from v1.1.35 - all were measured/verified against
+//          real HA components and remain correct. All bug fixes from the
+//          1.0.x/1.1.x history (section 7 of the transfer doc) preserved.
 // v1.1.35: Fixed the actual scroll bug - it was the dropdown menu itself (state/numeric_state choices) opening off-screen, not the new condition card. Scroll now triggers on opening the dropdown, using the same shadow-boundary-crossing logic as before. The earlier two attempts (1.1.33, 1.1.34) were both scrolling the wrong element at the wrong moment.
 // v1.1.34: Fixed the scroll-into-view fix from 1.1.33, which never actually moved the scrollbar - the real scroll container (HA's .element-editor.ha-scrollbar) sits outside our own shadow boundary (we're inside hui-card-element-editor's shadow root), so plain scrollIntoView()/closest() couldn't reach it. Now walks out via getRootNode().host, finds the real container, and scrolls it directly.
 // v1.1.33: Newly added condition card scrolls into view automatically (only on add, not on every edit)
@@ -56,7 +84,13 @@ console.info(
   'background-color: #1E1E1E; color: #FFFFFF; font-weight: bold; padding: 2px 4px; border-radius: 0 3px 3px 0;'
 );
 
-class ChronoPanelCard extends HTMLElement {
+// ─── Card ───────────────────────────────────────────────────────────────────
+class ChronoPanelCard extends LitElement {
+  static properties = {
+    _config: { attribute: false },
+    _hass:   { attribute: false },
+  };
+
   static async getConfigElement() {
     return document.createElement("chrono-panel-card-editor");
   }
@@ -69,82 +103,23 @@ class ChronoPanelCard extends HTMLElement {
     if (!config || !Array.isArray(config.cards)) {
       throw new Error("chrono-panel-card: 'cards' must be an array");
     }
-
     this._config = config;
-    this._cardEntries = [];
-
-    // Wipe and rebuild on every setConfig (editor live-preview safe).
-    this.innerHTML = "";
-
-    const wrapper = document.createElement("div");
-    wrapper.style.position = "relative";
-    wrapper.style.width = "100%";
-    wrapper.style.height = "100%";
-    this._wrapper = wrapper;
-    this.appendChild(wrapper);
-
-    // HA's documented mechanism for custom cards to create other cards
-    // correctly, instead of guessing internal tag names and racing
-    // customElements registration.
-    window.loadCardHelpers().then((helpers) => {
-      config.cards.forEach((cardConfig) => {
-        const entry = {
-          el: null,
-          visibility: cardConfig.visibility || null,
-          ready: false,
-        };
-        this._cardEntries.push(entry);
-
-        // card-mod v4 patches at the hui-card level and expects each
-        // card it styles to be wrapped in a <hui-card>. Creating the
-        // child card directly (bypassing hui-card) is what caused
-        // card_mod-equipped children to misbehave. Use a real
-        // hui-card wrapper, exactly like vertical-stack/grid do.
-        const huiCard = document.createElement("hui-card");
-        huiCard.hass = this._hass;
-        huiCard.config = cardConfig;
-
-        huiCard.style.position = "absolute";
-        huiCard.style.top = "0";
-        huiCard.style.left = "0";
-        huiCard.style.width = "100%";
-        huiCard.style.height = "100%";
-        huiCard.style.display = "none"; // until first hass tick decides
-
-        entry.el = huiCard;
-        entry.ready = true;
-        wrapper.appendChild(huiCard);
-
-        if (this._hass) {
-          const isVisible = this._evaluateVisibility(entry.visibility, this._hass);
-          huiCard.style.display = isVisible ? "block" : "none";
-        }
-      });
-    });
   }
 
   set hass(hass) {
     this._hass = hass;
-
-    this._cardEntries.forEach((entry) => {
-      if (!entry.ready) return;
-
-      entry.el.hass = hass;
-      const isVisible = this._evaluateVisibility(entry.visibility, hass);
-      entry.el.style.display = isVisible ? "block" : "none";
-    });
   }
 
+  get hass() {
+    return this._hass;
+  }
+
+  // Calls the plain function reference, not this._evaluateCondition, so this
+  // still works correctly when borrowed via .call() from an object that
+  // isn't a ChronoPanelCard instance (see the editor's _evaluateConditions /
+  // _evaluateOneCondition).
   _evaluateVisibility(visibility, hass) {
     if (!visibility) return true; // no visibility block => always show
-
-    // Support the same array-of-conditions shape HA uses natively.
-    // Only "state" and "numeric_state" condition types are implemented,
-    // on purpose. Other types: ignore, don't block (unknown types pass).
-    // Calls the plain function reference, not this._evaluateCondition,
-    // so this still works correctly when borrowed via .call() from an
-    // object that isn't a ChronoPanelCard instance (see the editor's
-    // _evaluateConditions / _evaluateOneCondition).
     return visibility.every((cond) => ChronoPanelCard.prototype._evaluateCondition(cond, hass));
   }
 
@@ -178,6 +153,52 @@ class ChronoPanelCard extends HTMLElement {
       grid_columns: 1,
     };
   }
+
+  static styles = css`
+    :host {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    .wrapper {
+      position: relative;
+      width: 100%;
+      height: 100%;
+    }
+    hui-card {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+    }
+  `;
+
+  render() {
+    if (!this._config) return html``;
+
+    return html`
+      <div class="wrapper">
+        ${(this._config.cards ?? []).map((cardConfig) => {
+          const visibility = cardConfig.visibility || null;
+          const isVisible = this._hass
+            ? this._evaluateVisibility(visibility, this._hass)
+            : false;
+          return html`
+            <hui-card
+              .hass=${this._hass}
+              .config=${cardConfig}
+              style=${styleMap({ display: isVisible ? "block" : "none" })}
+            ></hui-card>
+          `;
+        })}
+      </div>
+    `;
+  }
+}
+
+if (!customElements.get("chrono-panel-card")) {
+  customElements.define("chrono-panel-card", ChronoPanelCard);
 }
 
 // ─── Editor ─────────────────────────────────────────────────────────────────
@@ -185,29 +206,82 @@ class ChronoPanelCard extends HTMLElement {
 // toolbar: move/copy/cut/delete, add via hui-card-picker). Built from
 // scratch against chrono-panel-card's own `cards:` config shape - no
 // borrowing/impersonation of hui-stack-card-editor itself.
-class ChronoPanelCardEditor extends HTMLElement {
+class ChronoPanelCardEditor extends LitElement {
+  static properties = {
+    _config:          { attribute: false },
+    _selected:        { state: true },
+    _guiMode:         { state: true },
+    _innerTab:        { state: true },
+    _collapsed:       { state: true },
+    _addDropdownOpen: { state: true },
+    _openMenuIndex:   { state: true },
+    _hass:            { attribute: false },
+  };
+
+  // _clipboard is wired up after the class body (see storage(...) call
+  // below) rather than via @storage(...) decorator syntax, since this file
+  // loads as a plain ES module with no compiler transform available to
+  // process decorators - the decorator function is called directly
+  // instead, which is exactly what decorator syntax compiles down to
+  // anyway. Writing through this property (this._clipboard = ...) goes
+  // through the same storage() mechanism hui-card-picker and HA's own
+  // hui-stack-card-editor use for the same key - it updates the shared
+  // in-memory cache those components read from, not just the raw
+  // sessionStorage entry. A direct sessionStorage.setItem() call (the
+  // previous, buggy approach) never reaches that cache, so a freshly
+  // opened hui-card-picker would keep showing whatever was cached the
+  // first time the key was ever read on this page load - see v1.1.x
+  // history. This is the fix for that bug.
+
+  constructor() {
+    super();
+    this._selected = 0;
+    this._guiMode = true;
+    this._innerTab = "config";
+    this._collapsed = {};
+    this._addDropdownOpen = false;
+    this._openMenuIndex = null;
+    this._keys = new Map();
+    this._handleOutsideClick = this._handleOutsideClick.bind(this);
+  }
+
+  connectedCallback() {
+    super.connectedCallback();
+    document.addEventListener("click", this._handleOutsideClick);
+  }
+
+  disconnectedCallback() {
+    document.removeEventListener("click", this._handleOutsideClick);
+    super.disconnectedCallback();
+  }
+
+  // Closes the add-condition dropdown and the condition-card 3-dot menu on
+  // any click outside them. The toggle handlers for both already call
+  // ev.stopPropagation(), so a click that actually opened/toggled one of
+  // them never reaches this listener for that same click.
+  _handleOutsideClick() {
+    if (this._addDropdownOpen) this._addDropdownOpen = false;
+    if (this._openMenuIndex !== null) this._openMenuIndex = null;
+  }
+
   setConfig(config) {
-    const isFirstLoad = this._config === undefined;
     this._config = config || { cards: [] };
-    if (isFirstLoad) {
-      this._selected = 0;
-      this._guiMode = true;
-      this._innerTab = "config";
-      this._collapsedConditions = {};
-      this._buildSkeleton();
-    }
-    this._updateTabStrip();
-    this._updateContent();
   }
 
   set hass(hass) {
     this._hass = hass;
-    if (this._childEditorEl) this._childEditorEl.hass = hass;
-    if (this._pickerEl) this._pickerEl.hass = hass;
+  }
+
+  get hass() {
+    return this._hass;
   }
 
   set lovelace(lovelace) {
     this._lovelace = lovelace;
+  }
+
+  get lovelace() {
+    return this._lovelace;
   }
 
   _fireConfigChanged() {
@@ -220,572 +294,61 @@ class ChronoPanelCardEditor extends HTMLElement {
     );
   }
 
-  // Built exactly once, on first setConfig. Never wiped afterward. Every
-  // later state change only updates the specific pieces below that are
-  // actually affected, instead of destroying and recreating everything -
-  // a real component (hui-card-picker, ha-yaml-editor, a child card's own
-  // editor) can otherwise get torn out from under itself mid-update,
-  // which is what previously crashed hui-card-picker during cut.
-  _buildSkeleton() {
-    this.innerHTML = "";
-
-    this._tabStripEl = document.createElement("div");
-    this._tabStripEl.style.display = "flex";
-    this._tabStripEl.style.alignItems = "center";
-    this._tabStripEl.style.gap = "4px";
-    this._tabStripEl.style.marginBottom = "8px";
-    this._tabStripEl.style.borderBottom = "1px solid #444";
-    this.appendChild(this._tabStripEl);
-
-    this._editorAreaEl = document.createElement("div");
-    this.appendChild(this._editorAreaEl);
-
-    this._cardToolbarEl = null; // created on demand inside _updateContent
-    this._innerTabsEl = null;
-    this._contentEl = null;
-  }
-
-  // Rebuilds only the tab strip (card-selector tabs + add button). Cheap,
-  // and the only thing inside it (plain buttons) is safe to fully replace
-  // every time - nothing here is a real, stateful third-party component.
-  _updateTabStrip() {
-    this._tabStripEl.innerHTML = "";
-    const cards = this._config.cards;
-
-    cards.forEach((_card, i) => {
-      const tab = document.createElement("button");
-      tab.textContent = String(i + 1);
-      const active = i === this._selected;
-      tab.style.background = "none";
-      tab.style.border = "none";
-      tab.style.borderBottom = active ? "2px solid var(--primary-color)" : "2px solid transparent";
-      tab.style.color = active ? "var(--primary-color)" : "#e1e1e1";
-      tab.style.fontWeight = active ? "600" : "400";
-      tab.style.padding = "6px 10px";
-      tab.style.cursor = "pointer";
-      tab.addEventListener("click", () => {
-        this._selected = i;
-        this._guiMode = true;
-        this._innerTab = "config";
-        this._updateTabStrip();
-        this._updateContent();
-      });
-      this._tabStripEl.appendChild(tab);
-    });
-
-    const addBtn = document.createElement("button");
-    addBtn.innerHTML = `<svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z"/></svg>`;
-    addBtn.style.background = "none";
-    addBtn.style.border = "none";
-    addBtn.style.color = "#e1e1e1";
-    addBtn.style.display = "flex";
-    addBtn.style.alignItems = "center";
-    addBtn.style.cursor = "pointer";
-    addBtn.style.marginLeft = "auto";
-    addBtn.addEventListener("click", () => {
-      this._selected = this._config.cards.length;
-      this._innerTab = "config";
-      this._updateTabStrip();
-      this._updateContent();
-    });
-    this._tabStripEl.appendChild(addBtn);
-  }
-
-  // Decides what belongs in the editor area below the tab strip, and only
-  // replaces the specific piece(s) that actually need to change for the
-  // current state, instead of wiping the whole area unconditionally.
-  _updateContent() {
-    const cards = this._config.cards;
-    const numCards = cards.length;
-    const showingCard = this._selected < numCards;
-
-    if (!showingCard) {
-      // Past the end: only the picker belongs here. Tear down the
-      // card-toolbar/inner-tabs if they exist from a previous state,
-      // since they don't apply on this screen.
-      if (this._cardToolbarEl) { this._cardToolbarEl.remove(); this._cardToolbarEl = null; }
-      if (this._innerTabsEl) { this._innerTabsEl.remove(); this._innerTabsEl = null; }
-      this._mountPicker();
-      return;
+  // Stable per-(index,length) key so hui-card-element-editor isn't torn
+  // down and recreated on every unrelated render - only when the selected
+  // index or card count actually changes shape, same pattern as HA's own
+  // hui-stack-card-editor._getKey().
+  _getKey(index, length) {
+    const key = `${index}-${length}`;
+    if (!this._keys.has(key)) {
+      this._keys.set(key, Math.random().toString());
     }
-
-    // Showing a selected card: ensure the card toolbar and inner tabs
-    // exist (build once if missing), then update them in place.
-    if (!this._cardToolbarEl) {
-      this._cardToolbarEl = document.createElement("div");
-      this._editorAreaEl.insertBefore(this._cardToolbarEl, this._editorAreaEl.firstChild);
-    }
-    this._updateCardToolbar();
-
-    if (!this._innerTabsEl) {
-      this._innerTabsEl = document.createElement("div");
-      this._cardToolbarEl.after(this._innerTabsEl);
-    }
-    this._updateInnerTabs();
-
-    this._mountSelectedCardContent();
+    return this._keys.get(key);
   }
 
-  _updateCardToolbar() {
-    const numCards = this._config.cards.length;
-    this._cardToolbarEl.innerHTML = "";
-    this._cardToolbarEl.style.display = "flex";
-    this._cardToolbarEl.style.justifyContent = "space-between";
-    this._cardToolbarEl.style.gap = "4px";
-    this._cardToolbarEl.style.marginBottom = "8px";
-
-    const iconBtn = (svgPath, onClick, disabled) => {
-      const btn = document.createElement("button");
-      btn.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="${svgPath}"/></svg>`;
-      btn.style.background = "none";
-      btn.style.border = "none";
-      btn.style.borderRadius = "50%";
-      btn.style.color = disabled ? "#555" : "#e1e1e1";
-      btn.style.cursor = disabled ? "default" : "pointer";
-      btn.style.padding = "4px";
-      btn.style.display = "flex";
-      btn.style.alignItems = "center";
-      btn.style.outline = "none";
-      btn.disabled = !!disabled;
-      btn.addEventListener("click", onClick);
-      btn.addEventListener("focus", () => { btn.style.outline = "2px solid var(--primary-color)"; });
-      btn.addEventListener("blur", () => { btn.style.outline = "none"; });
-      return btn;
-    };
-
-    const ICONS = {
-      prev: "M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z",
-      next: "M4,11V13H16L10.5,18.5L11.92,19.92L19.84,12L11.92,4.08L10.5,5.5L16,11H4Z",
-      copy: "M19,21H8V7H19M19,5H8A2,2 0 0,0 6,7V21A2,2 0 0,0 8,23H19A2,2 0 0,0 21,21V7A2,2 0 0,0 19,5M16,1H4A2,2 0 0,0 2,3V17H4V3H16V1Z",
-      cut: "M9.64,7.64C9.88,7.14 10,6.59 10,6A4,4 0 0,0 6,2A4,4 0 0,0 2,6A4,4 0 0,0 6,10C6.59,10 7.14,9.88 7.64,9.64L10,12L7.64,14.36C7.14,14.12 6.59,14 6,14A4,4 0 0,0 2,18A4,4 0 0,0 6,22A4,4 0 0,0 10,18C10,17.41 9.88,16.86 9.64,16.36L12,14L19,21H22V20L9.64,7.64M6,8A2,2 0 0,1 4,6A2,2 0 0,1 6,4A2,2 0 0,1 8,6A2,2 0 0,1 6,8M6,20A2,2 0 0,1 4,18A2,2 0 0,1 6,16A2,2 0 0,1 8,18A2,2 0 0,1 6,20M19,3L12,10L14,12L22,4V3H19Z",
-      delete: "M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z",
-      code: "M8,3A2,2 0 0,0 6,5V9A2,2 0 0,1 4,11H3V13H4A2,2 0 0,1 6,15V19A2,2 0 0,0 8,21H10V19H8V14A2,2 0 0,0 6,12A2,2 0 0,0 8,10V5H10V3M16,3A2,2 0 0,1 18,5V9A2,2 0 0,0 20,11H21V13H20A2,2 0 0,0 18,15V19A2,2 0 0,1 16,21H14V19H16V14A2,2 0 0,1 18,12A2,2 0 0,1 16,10V5H14V3H16Z",
-      list: "M3,4H7V8H3V4M9,5V7H21V5H9M3,10H7V14H3V10M9,11V13H21V11H9M3,16H7V20H3V16M9,17V19H21V17H9Z",
-    };
-
-    const codeBtn = iconBtn(this._guiMode ? ICONS.code : ICONS.list, () => {
-      this._guiMode = !this._guiMode;
-      this._updateCardToolbar();
-      this._mountSelectedCardContent();
-    });
-    this._cardToolbarEl.appendChild(codeBtn);
-
-    const rightButtons = document.createElement("div");
-    rightButtons.style.display = "flex";
-    rightButtons.style.gap = "4px";
-    rightButtons.appendChild(iconBtn(ICONS.prev, () => this._move(-1), this._selected === 0));
-    rightButtons.appendChild(iconBtn(ICONS.next, () => this._move(1), this._selected === numCards - 1));
-    rightButtons.appendChild(iconBtn(ICONS.copy, () => this._copy()));
-    rightButtons.appendChild(iconBtn(ICONS.cut, () => this._cut()));
-    rightButtons.appendChild(iconBtn(ICONS.delete, () => this._delete()));
-    this._cardToolbarEl.appendChild(rightButtons);
+  _selectTab(i) {
+    this._selected = i;
+    this._guiMode = true;
+    this._innerTab = "config";
   }
 
-  _updateInnerTabs() {
-    this._innerTabsEl.innerHTML = "";
-    this._innerTabsEl.style.display = "flex";
-    this._innerTabsEl.style.borderBottom = "1px solid #444";
-    this._innerTabsEl.style.marginBottom = "12px";
-
-    ["config", "visibility"].forEach((tabId) => {
-      const tabBtn = document.createElement("button");
-      tabBtn.textContent = tabId === "config" ? "Config" : "Visibility";
-      const active = this._innerTab === tabId;
-      tabBtn.style.flex = "1";
-      tabBtn.style.background = "none";
-      tabBtn.style.border = "none";
-      tabBtn.style.borderBottom = active ? "2px solid var(--primary-color)" : "2px solid transparent";
-      tabBtn.style.color = active ? "var(--primary-color)" : "#e1e1e1";
-      tabBtn.style.fontWeight = "500";
-      tabBtn.style.padding = "10px 0";
-      tabBtn.style.cursor = "pointer";
-      tabBtn.addEventListener("click", () => {
-        this._innerTab = tabId;
-        this._updateInnerTabs();
-        this._mountSelectedCardContent();
-      });
-      this._innerTabsEl.appendChild(tabBtn);
-    });
+  _addCard() {
+    this._selected = this._config.cards.length;
   }
 
-  // Replaces only the actual content area (child editor / YAML editor /
-  // visibility editor) - never touches the tab strip, card toolbar, or
-  // inner tabs above it. This is the one place a full child-replacement
-  // is correct: swapping between these is a genuine content change, not
-  // busywork on something that didn't change.
-  _mountSelectedCardContent() {
-    if (this._contentEl) {
-      this._contentEl.remove();
-    }
-    this._contentEl = document.createElement("div");
-    this._innerTabsEl.after(this._contentEl);
-    this._childEditorEl = null;
-
-    const cardConfig = this._config.cards[this._selected];
-
-    if (this._innerTab === "config" && this._guiMode) {
-      const target = this._contentEl;
-      const showFallback = (reason) => {
-        const fallback = document.createElement("div");
-        fallback.textContent =
-          "No visual editor available for this card type. Edit via YAML.";
-        target.appendChild(fallback);
-        console.warn("chrono-panel-card: child editor failed to load:", reason);
-      };
-      window.loadCardHelpers().then((helpers) => {
-        const tempEl = helpers.createCardElement(cardConfig);
-        const tagName = tempEl.localName;
-
-        customElements.whenDefined(tagName).then(() => {
-          const ElClass = customElements.get(tagName);
-          if (!ElClass || typeof ElClass.getConfigElement !== "function") {
-            showFallback("card type has no getConfigElement()");
-            return;
-          }
-          Promise.resolve(ElClass.getConfigElement()).then((editorEl) => {
-            editorEl.hass = this._hass;
-            editorEl.lovelace = this._lovelace;
-            editorEl.setConfig(cardConfig);
-            editorEl.addEventListener("config-changed", (ev) => {
-              ev.stopPropagation();
-              const updatedCards = [...this._config.cards];
-              const visibility = updatedCards[this._selected].visibility;
-              updatedCards[this._selected] = { ...ev.detail.config, visibility };
-              this._config = { ...this._config, cards: updatedCards };
-              this._fireConfigChanged();
-            });
-            this._childEditorEl = editorEl;
-            target.appendChild(editorEl);
-          }).catch(showFallback);
-        }).catch(showFallback);
-      }).catch(showFallback);
-    } else if (this._innerTab === "config" && !this._guiMode) {
-      const yamlEl = document.createElement("ha-yaml-editor");
-      yamlEl.hass = this._hass;
-      yamlEl.autoUpdate = true;
-      yamlEl.value = cardConfig;
-      yamlEl.addEventListener("value-changed", (ev) => {
-        ev.stopPropagation();
-        if (!ev.detail.isValid) return; // don't commit invalid YAML
-        const updatedCards = [...this._config.cards];
-        const visibility = updatedCards[this._selected].visibility;
-        updatedCards[this._selected] = { ...ev.detail.value, visibility };
-        this._config = { ...this._config, cards: updatedCards };
-        this._fireConfigChanged();
-      });
-      this._contentEl.appendChild(yamlEl);
-    } else {
-      this._contentEl.appendChild(this._renderVisibilityEditor(cardConfig));
-    }
+  _toggleGuiMode() {
+    this._guiMode = !this._guiMode;
   }
 
-  // Mounts the real hui-card-picker for the "past the end" / add-card
-  // screen. Only replaces _contentEl - never touches the tab strip.
-  _mountPicker() {
-    if (this._contentEl) {
-      this._contentEl.remove();
-    }
-    this._contentEl = document.createElement("div");
-    this._editorAreaEl.appendChild(this._contentEl);
-
-    const picker = document.createElement("hui-card-picker");
-    picker.hass = this._hass;
-    picker.lovelace = this._lovelace;
-    picker.addEventListener("config-changed", (ev) => {
-      ev.stopPropagation();
-      const updatedCards = [...this._config.cards, ev.detail.config];
-      this._config = { ...this._config, cards: updatedCards };
-      this._fireConfigChanged();
-      this._updateTabStrip();
-      this._updateContent();
-    });
-    this._pickerEl = picker;
-    this._contentEl.appendChild(picker);
+  _setInnerTab(tabId) {
+    this._innerTab = tabId;
   }
 
-  _openPopup(el) {
-    this._closeOpenPopup();
-    el.style.display = "block";
-    this._openPopupEl = el;
-    document.addEventListener("click", this._closeOpenPopupHandler = () => this._closeOpenPopup(), { once: true });
+  _handleChildConfigChanged(ev) {
+    ev.stopPropagation();
+    const updatedCards = [...this._config.cards];
+    const visibility = updatedCards[this._selected].visibility;
+    updatedCards[this._selected] = { ...ev.detail.config, visibility };
+    this._config = { ...this._config, cards: updatedCards };
+    this._fireConfigChanged();
   }
 
-  _closeOpenPopup() {
-    if (this._openPopupEl) {
-      this._openPopupEl.style.display = "none";
-      this._openPopupEl = null;
-    }
+  _handleYamlChanged(ev) {
+    ev.stopPropagation();
+    if (!ev.detail.isValid) return; // don't commit invalid YAML
+    const updatedCards = [...this._config.cards];
+    const visibility = updatedCards[this._selected].visibility;
+    updatedCards[this._selected] = { ...ev.detail.value, visibility };
+    this._config = { ...this._config, cards: updatedCards };
+    this._fireConfigChanged();
   }
 
-  _evaluateConditions(conditions) {
-    if (!this._hass) return false; // no data yet: don't claim visible without checking
-    // Reuse the exact same logic the real running card uses, so the
-    // editor's preview can never disagree with actual runtime behavior.
-    return ChronoPanelCard.prototype._evaluateVisibility.call(this, conditions, this._hass);
-  }
-
-  _evaluateOneCondition(cond) {
-    if (!this._hass) return false; // no data yet: don't claim visible without checking
-    return ChronoPanelCard.prototype._evaluateCondition.call(this, cond, this._hass);
-  }
-
-  _renderVisibilityEditor(cardConfig) {
-    const container = document.createElement("div");
-
-    const conditions = cardConfig.visibility || [];
-
-    const status = document.createElement("div");
-    status.style.display = "flex";
-    status.style.alignItems = "center";
-    status.style.gap = "8px";
-    status.style.padding = "10px 14px";
-    status.style.marginBottom = "12px";
-    status.style.borderRadius = "8px";
-
-    const visible = conditions.length === 0 || this._evaluateConditions(conditions);
-    status.style.background = visible ? "#202b21" : "#372c18";
-
-    const dot = document.createElement("span");
-    dot.style.display = "inline-flex";
-    dot.style.color = visible ? "#429f47" : "#ffa500";
-    const eyeOpenPath = "M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9M12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17M12,4.5C7,4.5 2.73,7.61 1,12C2.73,16.39 7,19.5 12,19.5C17,19.5 21.27,16.39 23,12C21.27,7.61 17,4.5 12,4.5Z";
-    const eyeOffPath = "M11.83,9L15,12.16C15,12.11 15,12.05 15,12A3,3 0 0,0 12,9C11.94,9 11.89,9 11.83,9M7.53,9.8L9.08,11.35C9.03,11.56 9,11.77 9,12A3,3 0 0,0 12,15C12.22,15 12.44,14.97 12.65,14.92L14.2,16.47C13.53,16.8 12.79,17 12,17A5,5 0 0,1 7,12C7,11.21 7.2,10.47 7.53,9.8M2,4.27L4.28,6.55L4.73,7C3.08,8.3 1.78,10 1,12C2.73,16.39 7,19.5 12,19.5C13.55,19.5 15.03,19.2 16.38,18.66L16.81,19.08L19.73,22L21,20.73L3.27,3M12,7A5,5 0 0,1 17,12C17,12.64 16.87,13.26 16.64,13.82L19.57,16.75C21.07,15.5 22.27,13.86 23,12C21.27,7.61 17,4.5 12,4.5C10.6,4.5 9.26,4.75 8,5.2L10.17,7.35C10.74,7.13 11.35,7 12,7Z";
-    dot.innerHTML = `<svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="${visible ? eyeOpenPath : eyeOffPath}"/></svg>`;
-    status.appendChild(dot);
-
-    const textWrap = document.createElement("div");
-    const line1 = document.createElement("div");
-    line1.textContent = visible ? "Current visibility: Visible" : "Current visibility: Hidden";
-    line1.style.fontWeight = "600";
-    line1.style.color = "#fff";
-    const line2 = document.createElement("div");
-    line2.textContent = conditions.length === 0
-      ? "No visibility conditions are set"
-      : (visible ? "All visibility conditions are met" : "Not all visibility conditions are met");
-    line2.style.fontSize = "12px";
-    line2.style.color = "#bbb";
-    textWrap.appendChild(line1);
-    textWrap.appendChild(line2);
-    status.appendChild(textWrap);
-    container.appendChild(status);
-
-    conditions.forEach((cond, i) => {
-      container.appendChild(this._renderConditionCard(cond, i));
-    });
-
-    // "+ Add condition" pill button with a dropdown of condition types
-    const addWrap = document.createElement("div");
-    addWrap.style.position = "relative";
-    addWrap.style.marginTop = "8px";
-
-    const addBtn = document.createElement("button");
-    addBtn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" style="vertical-align:-3px;margin-right:6px;"><path fill="currentColor" d="M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z"/></svg>Add condition`;
-    addBtn.style.background = "#002e3e";
-    addBtn.style.color = "#37c8fd";
-    addBtn.style.border = "none";
-    addBtn.style.borderRadius = "var(--ha-border-radius-pill)";
-    addBtn.style.height = "40px";
-    addBtn.style.padding = "0 var(--ha-space-4)";
-    addBtn.style.fontWeight = "600";
-    addBtn.style.cursor = "pointer";
-    addBtn.addEventListener("mouseenter", () => { addBtn.style.background = "#004156"; });
-    addBtn.addEventListener("mouseleave", () => { addBtn.style.background = "#002e3e"; });
-
-    const dropdown = document.createElement("div");
-    dropdown.style.position = "absolute";
-    dropdown.style.top = "100%";
-    dropdown.style.left = "0";
-    dropdown.style.marginTop = "4px";
-    dropdown.style.background = "#1e1e1e";
-    dropdown.style.border = "1px solid #444";
-    dropdown.style.borderRadius = "8px";
-    dropdown.style.boxShadow = "0 4px 12px rgba(0,0,0,0.4)";
-    dropdown.style.display = "none";
-    dropdown.style.zIndex = "10";
-    dropdown.style.minWidth = "200px";
-
-    const TYPES = [
-      { id: "numeric_state", label: "Entity numeric state", icon: "M3,3H21V5H3V3M3,7H21V9H3V7M3,11H21V13H3V11M3,15H21V17H3V15M3,19H21V21H3V19Z" },
-      { id: "state", label: "Entity state", icon: "M6.27 17.05C6.72 17.58 7 18.25 7 19C7 20.66 5.66 22 4 22S1 20.66 1 19 2.34 16 4 16C4.18 16 4.36 16 4.53 16.05L7.6 10.69L5.86 9.7L9.95 8.58L11.07 12.67L9.33 11.68L6.27 17.05M20 16C18.7 16 17.6 16.84 17.18 18H11V16L8 19L11 22V20H17.18C17.6 21.16 18.7 22 20 22C21.66 22 23 20.66 23 19S21.66 16 20 16M12 8C12.18 8 12.36 8 12.53 7.95L15.6 13.31L13.86 14.3L17.95 15.42L19.07 11.33L17.33 12.32L14.27 6.95C14.72 6.42 15 5.75 15 5C15 3.34 13.66 2 12 2S9 3.34 9 5 10.34 8 12 8Z" },
-    ];
-
-    TYPES.forEach((t) => {
-      const row = document.createElement("div");
-      row.style.display = "flex";
-      row.style.alignItems = "center";
-      row.style.gap = "10px";
-      row.style.padding = "10px 14px";
-      row.style.cursor = "pointer";
-      row.style.color = "#e0e0e0";
-      row.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="${t.icon}"/></svg><span>${t.label}</span>`;
-      row.addEventListener("mouseenter", () => { row.style.background = "#2a2a2a"; });
-      row.addEventListener("mouseleave", () => { row.style.background = "none"; });
-      row.addEventListener("click", (e) => {
-        e.stopPropagation();
-        const newCond = t.id === "state"
-          ? customElements.get("ha-card-condition-state").defaultConfig
-          : customElements.get("ha-card-condition-numeric_state").defaultConfig;
-        this._updateVisibility(cardConfig, [...conditions, { ...newCond }]);
-        this._closeOpenPopup();
-      });
-      dropdown.appendChild(row);
-    });
-
-    addBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      if (dropdown.style.display === "none") {
-        this._openPopup(dropdown);
-        // The dropdown can open below the visible area. The real
-        // scrolling container (HA's .element-editor.ha-scrollbar) sits
-        // in light DOM, outside our shadow boundary, so we step out
-        // via getRootNode().host before searching for it.
-        const root = this.getRootNode();
-        const host = root && root.host;
-        const scrollContainer = host ? host.closest(".ha-scrollbar") : null;
-        if (scrollContainer) {
-          const containerRect = scrollContainer.getBoundingClientRect();
-          const dropdownRect = dropdown.getBoundingClientRect();
-          if (dropdownRect.bottom > containerRect.bottom) {
-            scrollContainer.scrollTop += (dropdownRect.bottom - containerRect.bottom) + 16;
-          }
-        } else {
-          dropdown.scrollIntoView({ behavior: "smooth", block: "nearest" });
-        }
-      } else {
-        this._closeOpenPopup();
-      }
-    });
-
-    addWrap.appendChild(addBtn);
-    addWrap.appendChild(dropdown);
-    container.appendChild(addWrap);
-    return container;
-  }
-
-  _renderConditionCard(cond, index) {
-    const TYPE_INFO = {
-      state: { label: "Entity state", icon: "M6.27 17.05C6.72 17.58 7 18.25 7 19C7 20.66 5.66 22 4 22S1 20.66 1 19 2.34 16 4 16C4.18 16 4.36 16 4.53 16.05L7.6 10.69L5.86 9.7L9.95 8.58L11.07 12.67L9.33 11.68L6.27 17.05M20 16C18.7 16 17.6 16.84 17.18 18H11V16L8 19L11 22V20H17.18C17.6 21.16 18.7 22 20 22C21.66 22 23 20.66 23 19S21.66 16 20 16M12 8C12.18 8 12.36 8 12.53 7.95L15.6 13.31L13.86 14.3L17.95 15.42L19.07 11.33L17.33 12.32L14.27 6.95C14.72 6.42 15 5.75 15 5C15 3.34 13.66 2 12 2S9 3.34 9 5 10.34 8 12 8Z" },
-      numeric_state: { label: "Entity numeric state", icon: "M3,3H21V5H3V3M3,7H21V9H3V7M3,11H21V13H3V11M3,15H21V17H3V15M3,19H21V21H3V19Z" },
-    };
-    const info = TYPE_INFO[cond.condition] || { label: cond.condition, icon: "" };
-    const conditionPasses = this._evaluateOneCondition(cond);
-    const collapsed = !!this._collapsedConditions[index];
-
-    const card = document.createElement("div");
-    card.style.border = "1px solid #444";
-    card.style.borderRadius = "8px";
-    card.style.marginBottom = "8px";
-    card.style.overflow = "hidden";
-
-    const header = document.createElement("div");
-    header.style.display = "flex";
-    header.style.alignItems = "center";
-    header.style.gap = "8px";
-    header.style.padding = "10px 12px";
-    header.style.cursor = "pointer";
-
-    const chevron = document.createElement("span");
-    chevron.innerHTML = `<svg viewBox="0 0 24 24" width="24" height="24" style="transform:rotate(${collapsed ? "0deg" : "180deg"});transition:transform .15s;"><path fill="currentColor" d="M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z"/></svg>`;
-    header.appendChild(chevron);
-
-    const iconWrap = document.createElement("span");
-    iconWrap.style.position = "relative";
-    iconWrap.style.display = "inline-flex";
-    iconWrap.style.color = "#8d8d8d";
-    iconWrap.innerHTML = `<svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="${info.icon}"/></svg>`;
-    const badge = document.createElement("span");
-    badge.style.position = "absolute";
-    badge.style.top = "-5px";
-    badge.style.right = "-5px";
-    badge.style.width = "10px";
-    badge.style.height = "10px";
-    badge.style.borderRadius = "50%";
-    if (conditionPasses) {
-      badge.style.background = "#4caf50";
-    } else {
-      badge.style.background = "none";
-      badge.style.border = "2px solid #de6502";
-      badge.style.boxSizing = "border-box";
-    }
-    iconWrap.appendChild(badge);
-    header.appendChild(iconWrap);
-
-    const label = document.createElement("span");
-    label.textContent = info.label;
-    label.style.flex = "1";
-    label.style.fontWeight = "600";
-    header.appendChild(label);
-
-    // Three-dot menu (delete only, for now)
-    const menuWrap = document.createElement("span");
-    menuWrap.style.position = "relative";
-    const menuBtn = document.createElement("button");
-    menuBtn.innerHTML = `<svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12,16A2,2 0 0,1 14,18A2,2 0 0,1 12,20A2,2 0 0,1 10,18A2,2 0 0,1 12,16M12,10A2,2 0 0,1 14,12A2,2 0 0,1 12,14A2,2 0 0,1 10,12A2,2 0 0,1 12,10M12,4A2,2 0 0,1 14,6A2,2 0 0,1 12,8A2,2 0 0,1 10,6A2,2 0 0,1 12,4Z"/></svg>`;
-    menuBtn.style.background = "none";
-    menuBtn.style.border = "none";
-    menuBtn.style.color = "#e1e1e1";
-    menuBtn.style.cursor = "pointer";
-    const menu = document.createElement("div");
-    menu.style.position = "absolute";
-    menu.style.right = "0";
-    menu.style.top = "100%";
-    menu.style.background = "#1e1e1e";
-    menu.style.border = "1px solid #444";
-    menu.style.borderRadius = "8px";
-    menu.style.boxShadow = "0 4px 12px rgba(0,0,0,0.4)";
-    menu.style.display = "none";
-    menu.style.zIndex = "10";
-    menu.style.minWidth = "120px";
-    const deleteRow = document.createElement("div");
-    deleteRow.textContent = "Delete";
-    deleteRow.style.padding = "10px 14px";
-    deleteRow.style.cursor = "pointer";
-    deleteRow.style.color = "#e0e0e0";
-    deleteRow.addEventListener("mouseenter", () => { deleteRow.style.background = "#2a2a2a"; });
-    deleteRow.addEventListener("mouseleave", () => { deleteRow.style.background = "none"; });
-    deleteRow.addEventListener("click", (e) => {
-      e.stopPropagation();
-      this._closeOpenPopup();
-      this._removeCondition(index);
-    });
-    menu.appendChild(deleteRow);
-    menuBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      if (menu.style.display === "none") {
-        this._openPopup(menu);
-      } else {
-        this._closeOpenPopup();
-      }
-    });
-    menuWrap.appendChild(menuBtn);
-    menuWrap.appendChild(menu);
-    header.appendChild(menuWrap);
-
-    header.addEventListener("click", () => {
-      this._collapsedConditions[index] = !collapsed;
-      this._mountSelectedCardContent();
-    });
-    card.appendChild(header);
-
-    if (!collapsed) {
-      const body = document.createElement("div");
-      body.style.padding = "0 12px 12px 12px";
-
-      const tagName = cond.condition === "state"
-        ? "ha-card-condition-state"
-        : "ha-card-condition-numeric_state";
-      const condEl = document.createElement(tagName);
-      condEl.hass = this._hass;
-      condEl.condition = cond;
-      condEl.addEventListener("value-changed", (ev) => {
-        ev.stopPropagation();
-        this._setCondition(index, ev.detail.value);
-      });
-      body.appendChild(condEl);
-      card.appendChild(body);
-    }
-
-    return card;
+  _handleCardPicked(ev) {
+    ev.stopPropagation();
+    const updatedCards = [...this._config.cards, ev.detail.config];
+    this._config = { ...this._config, cards: updatedCards };
+    this._keys.clear();
+    this._fireConfigChanged();
   }
 
   _setCondition(index, newCondition) {
@@ -807,9 +370,7 @@ class ChronoPanelCardEditor extends HTMLElement {
     updatedCards[this._selected] = { ...cardConfig, visibility: conditions };
     this._config = { ...this._config, cards: updatedCards };
     this._fireConfigChanged();
-    this._mountSelectedCardContent();
   }
-
 
   _move(delta) {
     const cards = [...this._config.cards];
@@ -817,17 +378,14 @@ class ChronoPanelCardEditor extends HTMLElement {
     cards.splice(this._selected + delta, 0, card);
     this._config = { ...this._config, cards };
     this._selected += delta;
+    this._keys.clear();
     this._fireConfigChanged();
-    this._updateTabStrip();
-    this._updateCardToolbar();
-    this._mountSelectedCardContent();
   }
 
+  // Writes through the storage() decorator's own setter, not raw
+  // sessionStorage - see the _clipboard property declaration above.
   _copy() {
-    sessionStorage.setItem(
-      "dashboardCardClipboard",
-      JSON.stringify(this._config.cards[this._selected])
-    );
+    this._clipboard = JSON.parse(JSON.stringify(this._config.cards[this._selected]));
   }
 
   _cut() {
@@ -840,21 +398,504 @@ class ChronoPanelCardEditor extends HTMLElement {
     cards.splice(this._selected, 1);
     this._config = { ...this._config, cards };
     this._selected = Math.max(0, this._selected - 1);
+    this._keys.clear();
     this._fireConfigChanged();
-    this._updateTabStrip();
-    this._updateContent();
+  }
+
+  // Reuse the exact same logic the real running card uses, so the editor's
+  // preview can never disagree with actual runtime behavior.
+  _evaluateConditions(conditions) {
+    if (!this._hass) return false; // no data yet: don't claim visible without checking
+    return ChronoPanelCard.prototype._evaluateVisibility.call(this, conditions, this._hass);
+  }
+
+  _evaluateOneCondition(cond) {
+    if (!this._hass) return false; // no data yet: don't claim visible without checking
+    return ChronoPanelCard.prototype._evaluateCondition.call(this, cond, this._hass);
+  }
+
+  static styles = css`
+    :host {
+      display: block;
+    }
+    .tab-strip {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      margin-bottom: 8px;
+      border-bottom: 1px solid #444;
+    }
+    .tab-strip button {
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: #e1e1e1;
+      font-weight: 400;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    .tab-strip button.active {
+      border-bottom: 2px solid var(--primary-color);
+      color: var(--primary-color);
+      font-weight: 600;
+    }
+    .tab-strip .add-btn {
+      display: flex;
+      align-items: center;
+      margin-left: auto;
+    }
+    .card-toolbar {
+      display: flex;
+      justify-content: space-between;
+      gap: 4px;
+      margin-bottom: 8px;
+    }
+    .card-toolbar .right {
+      display: flex;
+      gap: 4px;
+    }
+    .icon-btn {
+      background: none;
+      border: none;
+      border-radius: 50%;
+      color: #e1e1e1;
+      cursor: pointer;
+      padding: 4px;
+      display: flex;
+      align-items: center;
+      outline: none;
+    }
+    .icon-btn:disabled {
+      color: #555;
+      cursor: default;
+    }
+    .icon-btn:focus {
+      outline: 2px solid var(--primary-color);
+    }
+    .inner-tabs {
+      display: flex;
+      border-bottom: 1px solid #444;
+      margin-bottom: 12px;
+    }
+    .inner-tabs button {
+      flex: 1;
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: #e1e1e1;
+      font-weight: 500;
+      padding: 10px 0;
+      cursor: pointer;
+    }
+    .inner-tabs button.active {
+      border-bottom: 2px solid var(--primary-color);
+      color: var(--primary-color);
+    }
+    .status-banner {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      margin-bottom: 12px;
+      border-radius: 8px;
+    }
+    .status-banner .line1 {
+      font-weight: 600;
+      color: #fff;
+    }
+    .status-banner .line2 {
+      font-size: 12px;
+      color: #bbb;
+    }
+    .condition-card {
+      border: 1px solid #444;
+      border-radius: 8px;
+      margin-bottom: 8px;
+      overflow: hidden;
+    }
+    .condition-header {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 12px;
+      cursor: pointer;
+    }
+    .condition-header .icon-wrap {
+      position: relative;
+      display: inline-flex;
+      color: #8d8d8d;
+    }
+    .condition-header .badge {
+      position: absolute;
+      top: -5px;
+      right: -5px;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      box-sizing: border-box;
+    }
+    .condition-header .badge.pass {
+      background: #4caf50;
+    }
+    .condition-header .badge.fail {
+      background: none;
+      border: 2px solid #de6502;
+    }
+    .condition-header .label {
+      flex: 1;
+      font-weight: 600;
+    }
+    .condition-body {
+      padding: 0 12px 12px 12px;
+    }
+    .menu-wrap {
+      position: relative;
+    }
+    .menu-btn {
+      background: none;
+      border: none;
+      color: #e1e1e1;
+      cursor: pointer;
+    }
+    .menu {
+      position: absolute;
+      right: 0;
+      top: 100%;
+      background: #1e1e1e;
+      border: 1px solid #444;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      z-index: 10;
+      min-width: 120px;
+    }
+    .menu-row {
+      padding: 10px 14px;
+      cursor: pointer;
+      color: #e0e0e0;
+    }
+    .menu-row:hover {
+      background: #2a2a2a;
+    }
+    .add-wrap {
+      position: relative;
+      margin-top: 8px;
+    }
+    .add-btn {
+      background: #002e3e;
+      color: #37c8fd;
+      border: none;
+      border-radius: var(--ha-border-radius-pill);
+      height: 40px;
+      padding: 0 var(--ha-space-4);
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .add-btn:hover {
+      background: #004156;
+    }
+    .add-dropdown {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      margin-top: 4px;
+      background: #1e1e1e;
+      border: 1px solid #444;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+      z-index: 10;
+      min-width: 200px;
+    }
+    .add-dropdown .row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 14px;
+      cursor: pointer;
+      color: #e0e0e0;
+    }
+    .add-dropdown .row:hover {
+      background: #2a2a2a;
+    }
+  `;
+
+  // ── Icon paths (kept identical to v1.1.35 - all verified against the
+  //    real HA components, see the transfer document). ──────────────────
+  static ICONS = {
+    prev: "M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z",
+    next: "M4,11V13H16L10.5,18.5L11.92,19.92L19.84,12L11.92,4.08L10.5,5.5L16,11H4Z",
+    copy: "M19,21H8V7H19M19,5H8A2,2 0 0,0 6,7V21A2,2 0 0,0 8,23H19A2,2 0 0,0 21,21V7A2,2 0 0,0 19,5M16,1H4A2,2 0 0,0 2,3V17H4V3H16V1Z",
+    cut: "M9.64,7.64C9.88,7.14 10,6.59 10,6A4,4 0 0,0 6,2A4,4 0 0,0 2,6A4,4 0 0,0 6,10C6.59,10 7.14,9.88 7.64,9.64L10,12L7.64,14.36C7.14,14.12 6.59,14 6,14A4,4 0 0,0 2,18A4,4 0 0,0 6,22A4,4 0 0,0 10,18C10,17.41 9.88,16.86 9.64,16.36L12,14L19,21H22V20L9.64,7.64M6,8A2,2 0 0,1 4,6A2,2 0 0,1 6,4A2,2 0 0,1 8,6A2,2 0 0,1 6,8M6,20A2,2 0 0,1 4,18A2,2 0 0,1 6,16A2,2 0 0,1 8,18A2,2 0 0,1 6,20M19,3L12,10L14,12L22,4V3H19Z",
+    delete: "M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z",
+    code: "M8,3A2,2 0 0,0 6,5V9A2,2 0 0,1 4,11H3V13H4A2,2 0 0,1 6,15V19A2,2 0 0,0 8,21H10V19H8V14A2,2 0 0,0 6,12A2,2 0 0,0 8,10V5H10V3M16,3A2,2 0 0,1 18,5V9A2,2 0 0,0 20,11H21V13H20A2,2 0 0,0 18,15V19A2,2 0 0,1 16,21H14V19H16V14A2,2 0 0,1 18,12A2,2 0 0,1 16,10V5H14V3H16Z",
+    list: "M3,4H7V8H3V4M9,5V7H21V5H9M3,10H7V14H3V10M9,11V13H21V11H9M3,16H7V20H3V16M9,17V19H21V17H9Z",
+    add: "M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z",
+    chevron: "M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z",
+    menu: "M12,16A2,2 0 0,1 14,18A2,2 0 0,1 12,20A2,2 0 0,1 10,18A2,2 0 0,1 12,16M12,10A2,2 0 0,1 14,12A2,2 0 0,1 12,14A2,2 0 0,1 10,12A2,2 0 0,1 12,10M12,4A2,2 0 0,1 14,6A2,2 0 0,1 12,8A2,2 0 0,1 10,6A2,2 0 0,1 12,4Z",
+    eyeOpen: "M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9M12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17M12,4.5C7,4.5 2.73,7.61 1,12C2.73,16.39 7,19.5 12,19.5C17,19.5 21.27,16.39 23,12C21.27,7.61 17,4.5 12,4.5Z",
+    eyeOff: "M11.83,9L15,12.16C15,12.11 15,12.05 15,12A3,3 0 0,0 12,9C11.94,9 11.89,9 11.83,9M7.53,9.8L9.08,11.35C9.03,11.56 9,11.77 9,12A3,3 0 0,0 12,15C12.22,15 12.44,14.97 12.65,14.92L14.2,16.47C13.53,16.8 12.79,17 12,17A5,5 0 0,1 7,12C7,11.21 7.2,10.47 7.53,9.8M2,4.27L4.28,6.55L4.73,7C3.08,8.3 1.78,10 1,12C2.73,16.39 7,19.5 12,19.5C13.55,19.5 15.03,19.2 16.38,18.66L16.81,19.08L19.73,22L21,20.73L3.27,3M12,7A5,5 0 0,1 17,12C17,12.64 16.87,13.26 16.64,13.82L19.57,16.75C21.07,15.5 22.27,13.86 23,12C21.27,7.61 17,4.5 12,4.5C10.6,4.5 9.26,4.75 8,5.2L10.17,7.35C10.74,7.13 11.35,7 12,7Z",
+    stateType: "M6.27 17.05C6.72 17.58 7 18.25 7 19C7 20.66 5.66 22 4 22S1 20.66 1 19 2.34 16 4 16C4.18 16 4.36 16 4.53 16.05L7.6 10.69L5.86 9.7L9.95 8.58L11.07 12.67L9.33 11.68L6.27 17.05M20 16C18.7 16 17.6 16.84 17.18 18H11V16L8 19L11 22V20H17.18C17.6 21.16 18.7 22 20 22C21.66 22 23 20.66 23 19S21.66 16 20 16M12 8C12.18 8 12.36 8 12.53 7.95L15.6 13.31L13.86 14.3L17.95 15.42L19.07 11.33L17.33 12.32L14.27 6.95C14.72 6.42 15 5.75 15 5C15 3.34 13.66 2 12 2S9 3.34 9 5 10.34 8 12 8Z",
+    numericStateType: "M3,3H21V5H3V3M3,7H21V9H3V7M3,11H21V13H3V11M3,15H21V17H3V15M3,19H21V21H3V19Z",
+  };
+
+  static TYPE_INFO = {
+    state: { label: "Entity state", icon: ChronoPanelCardEditor.ICONS.stateType },
+    numeric_state: { label: "Entity numeric state", icon: ChronoPanelCardEditor.ICONS.numericStateType },
+  };
+
+  _icon(path, size = 24) {
+    return html`<svg viewBox="0 0 24 24" width="${size}" height="${size}"><path fill="currentColor" d="${path}"></path></svg>`;
+  }
+
+  render() {
+    if (!this._config) return html``;
+
+    const cards = this._config.cards;
+    const numCards = cards.length;
+    const showingCard = this._selected < numCards;
+
+    return html`
+      <div class="tab-strip">
+        ${cards.map((_card, i) => html`
+          <button
+            class=${i === this._selected ? "active" : ""}
+            @click=${() => this._selectTab(i)}
+          >${i + 1}</button>
+        `)}
+        <button class="add-btn" @click=${() => this._addCard()}>
+          ${this._icon(ChronoPanelCardEditor.ICONS.add)}
+        </button>
+      </div>
+
+      ${showingCard
+        ? this._renderCardEditor(cards, numCards)
+        : html`
+            <hui-card-picker
+              .hass=${this._hass}
+              .lovelace=${this._lovelace}
+              @config-changed=${(ev) => this._handleCardPicked(ev)}
+            ></hui-card-picker>
+          `}
+    `;
+  }
+
+  _renderCardEditor(cards, numCards) {
+    const cardConfig = cards[this._selected];
+    const isGuiMode = this._guiMode;
+
+    return html`
+      <div class="card-toolbar">
+        <button class="icon-btn" @click=${() => this._toggleGuiMode()}>
+          ${this._icon(isGuiMode ? ChronoPanelCardEditor.ICONS.code : ChronoPanelCardEditor.ICONS.list, 20)}
+        </button>
+        <div class="right">
+          <button class="icon-btn" ?disabled=${this._selected === 0} @click=${() => this._move(-1)}>
+            ${this._icon(ChronoPanelCardEditor.ICONS.prev, 20)}
+          </button>
+          <button class="icon-btn" ?disabled=${this._selected === numCards - 1} @click=${() => this._move(1)}>
+            ${this._icon(ChronoPanelCardEditor.ICONS.next, 20)}
+          </button>
+          <button class="icon-btn" @click=${() => this._copy()}>
+            ${this._icon(ChronoPanelCardEditor.ICONS.copy, 20)}
+          </button>
+          <button class="icon-btn" @click=${() => this._cut()}>
+            ${this._icon(ChronoPanelCardEditor.ICONS.cut, 20)}
+          </button>
+          <button class="icon-btn" @click=${() => this._delete()}>
+            ${this._icon(ChronoPanelCardEditor.ICONS.delete, 20)}
+          </button>
+        </div>
+      </div>
+
+      <div class="inner-tabs">
+        ${["config", "visibility"].map((tabId) => html`
+          <button
+            class=${this._innerTab === tabId ? "active" : ""}
+            @click=${() => this._setInnerTab(tabId)}
+          >${tabId === "config" ? "Config" : "Visibility"}</button>
+        `)}
+      </div>
+
+      ${keyed(this._getKey(this._selected, numCards), this._renderContent(cardConfig))}
+    `;
+  }
+
+  _renderContent(cardConfig) {
+    if (this._innerTab === "config" && this._guiMode) {
+      // hui-card-element-editor handles lazy-loading the child card type,
+      // calling its own getConfigElement(), and falling back to a message
+      // if that card type has no visual editor or its setConfig() throws -
+      // all internally, the same way HA's own hui-stack-card-editor uses it.
+      return html`
+        <hui-card-element-editor
+          .hass=${this._hass}
+          .lovelace=${this._lovelace}
+          .value=${cardConfig}
+          @config-changed=${(ev) => this._handleChildConfigChanged(ev)}
+        ></hui-card-element-editor>
+      `;
+    }
+
+    if (this._innerTab === "config" && !this._guiMode) {
+      return html`
+        <ha-yaml-editor
+          .hass=${this._hass}
+          .autoUpdate=${true}
+          .value=${cardConfig}
+          @value-changed=${(ev) => this._handleYamlChanged(ev)}
+        ></ha-yaml-editor>
+      `;
+    }
+
+    return this._renderVisibilityEditor(cardConfig);
+  }
+
+  _renderVisibilityEditor(cardConfig) {
+    const conditions = cardConfig.visibility || [];
+    const visible = conditions.length === 0 || this._evaluateConditions(conditions);
+
+    return html`
+      <div
+        class="status-banner"
+        style=${styleMap({ background: visible ? "#202b21" : "#372c18" })}
+      >
+        <span style=${styleMap({ color: visible ? "#429f47" : "#ffa500", display: "inline-flex" })}>
+          ${this._icon(visible ? ChronoPanelCardEditor.ICONS.eyeOpen : ChronoPanelCardEditor.ICONS.eyeOff)}
+        </span>
+        <div>
+          <div class="line1">${visible ? "Current visibility: Visible" : "Current visibility: Hidden"}</div>
+          <div class="line2">
+            ${conditions.length === 0
+              ? "No visibility conditions are set"
+              : (visible ? "All visibility conditions are met" : "Not all visibility conditions are met")}
+          </div>
+        </div>
+      </div>
+
+      ${conditions.map((cond, i) => this._renderConditionCard(cond, i))}
+
+      <div class="add-wrap">
+        <button class="add-btn" @click=${(ev) => this._toggleAddDropdown(ev)}>
+          ${this._icon(ChronoPanelCardEditor.ICONS.add, 16)} Add condition
+        </button>
+        ${this._addDropdownOpen
+          ? html`
+              <div class="add-dropdown">
+                ${Object.entries(ChronoPanelCardEditor.TYPE_INFO).map(([id, info]) => html`
+                  <div class="row" @click=${() => this._addCondition(id)}>
+                    ${this._icon(info.icon, 20)}<span>${info.label}</span>
+                  </div>
+                `)}
+              </div>
+            `
+          : ""}
+      </div>
+    `;
+  }
+
+  _toggleAddDropdown(ev) {
+    ev.stopPropagation();
+    this._addDropdownOpen = !this._addDropdownOpen;
+  }
+
+  _addCondition(typeId) {
+    const cardConfig = this._config.cards[this._selected];
+    const conditions = cardConfig.visibility || [];
+    const newCond = typeId === "state"
+      ? customElements.get("ha-card-condition-state").defaultConfig
+      : customElements.get("ha-card-condition-numeric_state").defaultConfig;
+    this._addDropdownOpen = false;
+    this._updateVisibility(cardConfig, [...conditions, { ...newCond }]);
+  }
+
+  _renderConditionCard(cond, index) {
+    const info = ChronoPanelCardEditor.TYPE_INFO[cond.condition] || { label: cond.condition, icon: "" };
+    const conditionPasses = this._evaluateOneCondition(cond);
+    const collapsed = !!this._collapsed[index];
+
+    return html`
+      <div class="condition-card">
+        <div class="condition-header" @click=${() => this._toggleCollapsed(index, collapsed)}>
+          <span style="transform:rotate(${collapsed ? "0deg" : "180deg"});transition:transform .15s;display:inline-flex;">
+            ${this._icon(ChronoPanelCardEditor.ICONS.chevron)}
+          </span>
+          <span class="icon-wrap">
+            ${this._icon(info.icon)}
+            <span class="badge ${conditionPasses ? "pass" : "fail"}"></span>
+          </span>
+          <span class="label">${info.label}</span>
+          <span class="menu-wrap">
+            <button class="menu-btn" @click=${(ev) => this._toggleConditionMenu(ev, index)}>
+              ${this._icon(ChronoPanelCardEditor.ICONS.menu, 18)}
+            </button>
+            ${this._openMenuIndex === index
+              ? html`
+                  <div class="menu">
+                    <div class="menu-row" @click=${(ev) => this._deleteConditionFromMenu(ev, index)}>Delete</div>
+                  </div>
+                `
+              : ""}
+          </span>
+        </div>
+        ${!collapsed ? html`<div class="condition-body">${this._renderConditionField(cond, index)}</div>` : ""}
+      </div>
+    `;
+  }
+
+  // ha-card-condition-state / ha-card-condition-numeric_state are real HA
+  // components. Lit binds .hass and .condition directly as properties (the
+  // leading dot), and listens for the value-changed event they emit with
+  // the full new condition object in event.detail.value - the same
+  // mounting contract HA's own condition editors use.
+  _renderConditionField(cond, index) {
+    if (cond.condition === "state") {
+      return html`
+        <ha-card-condition-state
+          .hass=${this._hass}
+          .condition=${cond}
+          @value-changed=${(ev) => { ev.stopPropagation(); this._setCondition(index, ev.detail.value); }}
+        ></ha-card-condition-state>
+      `;
+    }
+    return html`
+      <ha-card-condition-numeric_state
+        .hass=${this._hass}
+        .condition=${cond}
+        @value-changed=${(ev) => { ev.stopPropagation(); this._setCondition(index, ev.detail.value); }}
+      ></ha-card-condition-numeric_state>
+    `;
+  }
+
+  _toggleCollapsed(index, collapsed) {
+    this._collapsed = { ...this._collapsed, [index]: !collapsed };
+  }
+
+  _toggleConditionMenu(ev, index) {
+    ev.stopPropagation();
+    this._openMenuIndex = this._openMenuIndex === index ? null : index;
+  }
+
+  _deleteConditionFromMenu(ev, index) {
+    ev.stopPropagation();
+    this._openMenuIndex = null;
+    this._removeCondition(index);
   }
 }
+
+// Applies the storage() decorator function directly to the prototype,
+// since this file loads as a plain ES module with no compiler transform
+// available to process @decorator syntax. This is functionally identical
+// to `@storage({...}) _clipboard;` on the class body - decorator syntax
+// compiles down to exactly this kind of call.
+storage({
+  key: "dashboardCardClipboard",
+  state: false,
+  subscribe: false,
+  storage: "sessionStorage",
+})(ChronoPanelCardEditor.prototype, "_clipboard");
 
 if (!customElements.get("chrono-panel-card-editor")) {
   customElements.define("chrono-panel-card-editor", ChronoPanelCardEditor);
 }
-
-if (!customElements.get("chrono-panel-card")) {
-  customElements.define("chrono-panel-card", ChronoPanelCard);
-}
-
-
 
 // Register with HA's card picker so it shows up in the visual editor list.
 window.customCards = window.customCards || [];
