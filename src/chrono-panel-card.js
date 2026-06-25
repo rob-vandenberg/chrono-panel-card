@@ -12,9 +12,10 @@
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.1.32';
+const CARD_VERSION = '1.1.33';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.1.33: Newly added condition card scrolls into view automatically (only on add, not on every edit)
 // v1.1.32: "+" tab button is now a real 24x24 SVG icon instead of plain text; condition badge moved 3px right and 3px up; orange (failing) ring color changed to #de6502
 // v1.1.31: Used exact colors/sizes measured directly against the real HA component - banner backgrounds (#202b21 visible / #372c18 hidden), eye icon colors (#429f47 visible / #ffa500 hidden), entity-state icon color (#8d8d8d) and size (24x24), badge size (10x10), orange ring border width (2px)
 // v1.1.30: Replaced emoji eye icon with real HA open-eye/crossed-eye SVG paths (sized, colored correctly via currentColor); replaced invented "Entity state" icon with the real branching-node path; failing-condition badge is now a hollow ring outline instead of a solid dot; fixed chevron rotation direction (expanded = up, collapsed = down)
@@ -624,6 +625,12 @@ class ChronoPanelCardEditor extends HTMLElement {
           : customElements.get("ha-card-condition-numeric_state").defaultConfig;
         this._updateVisibility(cardConfig, [...conditions, { ...newCond }]);
         this._closeOpenPopup();
+        // _contentEl's only child is the visibility editor's own
+        // container; the last condition card sits just before the
+        // "+ Add condition" wrapper inside that container.
+        const visibilityContainer = this._contentEl.firstElementChild;
+        const newCard = visibilityContainer?.lastElementChild?.previousElementSibling;
+        if (newCard) newCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
       });
       dropdown.appendChild(row);
     });
