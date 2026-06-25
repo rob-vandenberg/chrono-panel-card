@@ -12,9 +12,10 @@
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.1.28';
+const CARD_VERSION = '1.1.29';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.1.29: Fixed "+ Add condition" button colors using exact values measured directly from the real button with Photoshop's color picker (#002e3e resting, #004156 hover, #37c8fd text) instead of CSS variables that weren't resolving to the expected result
 // v1.1.28: Rebuilt the editor's rendering mechanism - persistent DOM skeleton built once, each section (tab strip, card toolbar, inner tabs, content area) updates only when it actually changes, instead of wiping and rebuilding the entire editor on every state change. Fixes a real crash (hui-card-picker thrown from inside its own update lifecycle when torn down mid-update during cut) and removes the underlying cause, not just that one occurrence. All existing behavior (tabs, move/copy/cut/delete, Config/Visibility tabs, child editor mounting, YAML toggle, visibility conditions, add-card picker) is unchanged.
 // v1.0.27: Fixed Copy/Cut to actually do something useful - now writes to the same sessionStorage key (dashboardCardClipboard) hui-card-picker itself already reads, so the real "paste from clipboard" tile appears automatically in the existing add-card screen; previously copy wrote to an unused in-memory field nothing ever read back
 // v1.0.26: Fixed add-condition button colors to use the correct "filled" appearance variables (var(--wa-color-fill-normal) / var(--ha-color-fill-primary-normal-hover)) instead of the "accent/loud" ones, found via ha-button's real source; fixed editor jumping back to Config tab on every condition edit (setConfig now only resets tab/selection state on true first load, not on re-calls echoing our own config-changed)
@@ -568,16 +569,16 @@ class ChronoPanelCardEditor extends HTMLElement {
 
     const addBtn = document.createElement("button");
     addBtn.innerHTML = `<svg viewBox="0 0 24 24" width="16" height="16" style="vertical-align:-3px;margin-right:6px;"><path fill="currentColor" d="M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z"/></svg>Add condition`;
-    addBtn.style.background = "var(--wa-color-fill-normal)";
-    addBtn.style.color = "#fff";
+    addBtn.style.background = "#002e3e";
+    addBtn.style.color = "#37c8fd";
     addBtn.style.border = "none";
     addBtn.style.borderRadius = "var(--ha-border-radius-pill)";
     addBtn.style.height = "40px";
     addBtn.style.padding = "0 var(--ha-space-4)";
     addBtn.style.fontWeight = "600";
     addBtn.style.cursor = "pointer";
-    addBtn.addEventListener("mouseenter", () => { addBtn.style.background = "var(--ha-color-fill-primary-normal-hover)"; });
-    addBtn.addEventListener("mouseleave", () => { addBtn.style.background = "var(--wa-color-fill-normal)"; });
+    addBtn.addEventListener("mouseenter", () => { addBtn.style.background = "#004156"; });
+    addBtn.addEventListener("mouseleave", () => { addBtn.style.background = "#002e3e"; });
 
     const dropdown = document.createElement("div");
     dropdown.style.position = "absolute";
