@@ -12,9 +12,10 @@
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.1.29';
+const CARD_VERSION = '1.1.30';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.1.30: Replaced emoji eye icon with real HA open-eye/crossed-eye SVG paths (sized, colored correctly via currentColor); replaced invented "Entity state" icon with the real branching-node path; failing-condition badge is now a hollow ring outline instead of a solid dot; fixed chevron rotation direction (expanded = up, collapsed = down)
 // v1.1.29: Fixed "+ Add condition" button colors using exact values measured directly from the real button with Photoshop's color picker (#002e3e resting, #004156 hover, #37c8fd text) instead of CSS variables that weren't resolving to the expected result
 // v1.1.28: Rebuilt the editor's rendering mechanism - persistent DOM skeleton built once, each section (tab strip, card toolbar, inner tabs, content area) updates only when it actually changes, instead of wiping and rebuilding the entire editor on every state change. Fixes a real crash (hui-card-picker thrown from inside its own update lifecycle when torn down mid-update during cut) and removes the underlying cause, not just that one occurrence. All existing behavior (tabs, move/copy/cut/delete, Config/Visibility tabs, child editor mounting, YAML toggle, visibility conditions, add-card picker) is unchanged.
 // v1.0.27: Fixed Copy/Cut to actually do something useful - now writes to the same sessionStorage key (dashboardCardClipboard) hui-card-picker itself already reads, so the real "paste from clipboard" tile appears automatically in the existing add-card screen; previously copy wrote to an unused in-memory field nothing ever read back
@@ -539,7 +540,11 @@ class ChronoPanelCardEditor extends HTMLElement {
     status.style.background = visible ? "#1f3322" : "#332b14";
 
     const dot = document.createElement("span");
-    dot.textContent = visible ? "👁" : "🚫";
+    dot.style.display = "inline-flex";
+    dot.style.color = visible ? "#8bc88b" : "#d9a93b";
+    const eyeOpenPath = "M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9M12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17M12,4.5C7,4.5 2.73,7.61 1,12C2.73,16.39 7,19.5 12,19.5C17,19.5 21.27,16.39 23,12C21.27,7.61 17,4.5 12,4.5Z";
+    const eyeOffPath = "M11.83,9L15,12.16C15,12.11 15,12.05 15,12A3,3 0 0,0 12,9C11.94,9 11.89,9 11.83,9M7.53,9.8L9.08,11.35C9.03,11.56 9,11.77 9,12A3,3 0 0,0 12,15C12.22,15 12.44,14.97 12.65,14.92L14.2,16.47C13.53,16.8 12.79,17 12,17A5,5 0 0,1 7,12C7,11.21 7.2,10.47 7.53,9.8M2,4.27L4.28,6.55L4.73,7C3.08,8.3 1.78,10 1,12C2.73,16.39 7,19.5 12,19.5C13.55,19.5 15.03,19.2 16.38,18.66L16.81,19.08L19.73,22L21,20.73L3.27,3M12,7A5,5 0 0,1 17,12C17,12.64 16.87,13.26 16.64,13.82L19.57,16.75C21.07,15.5 22.27,13.86 23,12C21.27,7.61 17,4.5 12,4.5C10.6,4.5 9.26,4.75 8,5.2L10.17,7.35C10.74,7.13 11.35,7 12,7Z";
+    dot.innerHTML = `<svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="${visible ? eyeOpenPath : eyeOffPath}"/></svg>`;
     status.appendChild(dot);
 
     const textWrap = document.createElement("div");
@@ -595,7 +600,7 @@ class ChronoPanelCardEditor extends HTMLElement {
 
     const TYPES = [
       { id: "numeric_state", label: "Entity numeric state", icon: "M3,3H21V5H3V3M3,7H21V9H3V7M3,11H21V13H3V11M3,15H21V17H3V15M3,19H21V21H3V19Z" },
-      { id: "state", label: "Entity state", icon: "M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6L8,12L12,18L16,12L12,6Z" },
+      { id: "state", label: "Entity state", icon: "M6.27 17.05C6.72 17.58 7 18.25 7 19C7 20.66 5.66 22 4 22S1 20.66 1 19 2.34 16 4 16C4.18 16 4.36 16 4.53 16.05L7.6 10.69L5.86 9.7L9.95 8.58L11.07 12.67L9.33 11.68L6.27 17.05M20 16C18.7 16 17.6 16.84 17.18 18H11V16L8 19L11 22V20H17.18C17.6 21.16 18.7 22 20 22C21.66 22 23 20.66 23 19S21.66 16 20 16M12 8C12.18 8 12.36 8 12.53 7.95L15.6 13.31L13.86 14.3L17.95 15.42L19.07 11.33L17.33 12.32L14.27 6.95C14.72 6.42 15 5.75 15 5C15 3.34 13.66 2 12 2S9 3.34 9 5 10.34 8 12 8Z" },
     ];
 
     TYPES.forEach((t) => {
@@ -637,12 +642,11 @@ class ChronoPanelCardEditor extends HTMLElement {
 
   _renderConditionCard(cond, index) {
     const TYPE_INFO = {
-      state: { label: "Entity state", icon: "M12,2A10,10 0 0,0 2,12A10,10 0 0,0 12,22A10,10 0 0,0 22,12A10,10 0 0,0 12,2M12,4A8,8 0 0,1 20,12A8,8 0 0,1 12,20A8,8 0 0,1 4,12A8,8 0 0,1 12,4M12,6L8,12L12,18L16,12L12,6Z" },
+      state: { label: "Entity state", icon: "M6.27 17.05C6.72 17.58 7 18.25 7 19C7 20.66 5.66 22 4 22S1 20.66 1 19 2.34 16 4 16C4.18 16 4.36 16 4.53 16.05L7.6 10.69L5.86 9.7L9.95 8.58L11.07 12.67L9.33 11.68L6.27 17.05M20 16C18.7 16 17.6 16.84 17.18 18H11V16L8 19L11 22V20H17.18C17.6 21.16 18.7 22 20 22C21.66 22 23 20.66 23 19S21.66 16 20 16M12 8C12.18 8 12.36 8 12.53 7.95L15.6 13.31L13.86 14.3L17.95 15.42L19.07 11.33L17.33 12.32L14.27 6.95C14.72 6.42 15 5.75 15 5C15 3.34 13.66 2 12 2S9 3.34 9 5 10.34 8 12 8Z" },
       numeric_state: { label: "Entity numeric state", icon: "M3,3H21V5H3V3M3,7H21V9H3V7M3,11H21V13H3V11M3,15H21V17H3V15M3,19H21V21H3V19Z" },
     };
     const info = TYPE_INFO[cond.condition] || { label: cond.condition, icon: "" };
     const conditionPasses = this._evaluateOneCondition(cond);
-    const dotColor = conditionPasses ? "#4caf50" : "#ff9800";
     const collapsed = !!this._collapsedConditions[index];
 
     const card = document.createElement("div");
@@ -659,7 +663,7 @@ class ChronoPanelCardEditor extends HTMLElement {
     header.style.cursor = "pointer";
 
     const chevron = document.createElement("span");
-    chevron.innerHTML = `<svg viewBox="0 0 24 24" width="24" height="24" style="transform:rotate(${collapsed ? "180deg" : "0deg"});transition:transform .15s;"><path fill="currentColor" d="M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z"/></svg>`;
+    chevron.innerHTML = `<svg viewBox="0 0 24 24" width="24" height="24" style="transform:rotate(${collapsed ? "0deg" : "180deg"});transition:transform .15s;"><path fill="currentColor" d="M7.41,8.58L12,13.17L16.59,8.58L18,10L12,16L6,10L7.41,8.58Z"/></svg>`;
     header.appendChild(chevron);
 
     const iconWrap = document.createElement("span");
@@ -673,7 +677,13 @@ class ChronoPanelCardEditor extends HTMLElement {
     badge.style.width = "8px";
     badge.style.height = "8px";
     badge.style.borderRadius = "50%";
-    badge.style.background = dotColor;
+    if (conditionPasses) {
+      badge.style.background = "#4caf50";
+    } else {
+      badge.style.background = "none";
+      badge.style.border = "2px solid #ff9800";
+      badge.style.boxSizing = "border-box";
+    }
     iconWrap.appendChild(badge);
     header.appendChild(iconWrap);
 
