@@ -12,9 +12,10 @@
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.1.33';
+const CARD_VERSION = '1.1.34';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.1.34: Fixed the scroll-into-view fix from 1.1.33, which never actually moved the scrollbar - the real scroll container (HA's .element-editor.ha-scrollbar) sits outside our own shadow boundary (we're inside hui-card-element-editor's shadow root), so plain scrollIntoView()/closest() couldn't reach it. Now walks out via getRootNode().host, finds the real container, and scrolls it directly.
 // v1.1.33: Newly added condition card scrolls into view automatically (only on add, not on every edit)
 // v1.1.32: "+" tab button is now a real 24x24 SVG icon instead of plain text; condition badge moved 3px right and 3px up; orange (failing) ring color changed to #de6502
 // v1.1.31: Used exact colors/sizes measured directly against the real HA component - banner backgrounds (#202b21 visible / #372c18 hidden), eye icon colors (#429f47 visible / #ffa500 hidden), entity-state icon color (#8d8d8d) and size (24x24), badge size (10x10), orange ring border width (2px)
@@ -630,7 +631,26 @@ class ChronoPanelCardEditor extends HTMLElement {
         // "+ Add condition" wrapper inside that container.
         const visibilityContainer = this._contentEl.firstElementChild;
         const newCard = visibilityContainer?.lastElementChild?.previousElementSibling;
-        if (newCard) newCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        if (newCard) {
+          // The real scrolling element (HA's .element-editor.ha-scrollbar)
+          // sits in light DOM, outside the shadow root we're rendered
+          // inside (hui-card-element-editor's). scrollIntoView()'s
+          // automatic ancestor search does not cross that boundary, so
+          // we step out explicitly via getRootNode().host before
+          // searching for the real scroll container.
+          const root = this.getRootNode();
+          const host = root && root.host;
+          const scrollContainer = host ? host.closest(".ha-scrollbar") : null;
+          if (scrollContainer) {
+            const containerRect = scrollContainer.getBoundingClientRect();
+            const cardRect = newCard.getBoundingClientRect();
+            if (cardRect.bottom > containerRect.bottom) {
+              scrollContainer.scrollTop += (cardRect.bottom - containerRect.bottom) + 16;
+            }
+          } else {
+            newCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
+          }
+        }
       });
       dropdown.appendChild(row);
     });
