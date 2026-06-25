@@ -12,9 +12,10 @@
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.1.31';
+const CARD_VERSION = '1.1.32';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.1.32: "+" tab button is now a real 24x24 SVG icon instead of plain text; condition badge moved 3px right and 3px up; orange (failing) ring color changed to #de6502
 // v1.1.31: Used exact colors/sizes measured directly against the real HA component - banner backgrounds (#202b21 visible / #372c18 hidden), eye icon colors (#429f47 visible / #ffa500 hidden), entity-state icon color (#8d8d8d) and size (24x24), badge size (10x10), orange ring border width (2px)
 // v1.1.30: Replaced emoji eye icon with real HA open-eye/crossed-eye SVG paths (sized, colored correctly via currentColor); replaced invented "Entity state" icon with the real branching-node path; failing-condition badge is now a hollow ring outline instead of a solid dot; fixed chevron rotation direction (expanded = up, collapsed = down)
 // v1.1.29: Fixed "+ Add condition" button colors using exact values measured directly from the real button with Photoshop's color picker (#002e3e resting, #004156 hover, #37c8fd text) instead of CSS variables that weren't resolving to the expected result
@@ -270,11 +271,12 @@ class ChronoPanelCardEditor extends HTMLElement {
     });
 
     const addBtn = document.createElement("button");
-    addBtn.textContent = "+";
+    addBtn.innerHTML = `<svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z"/></svg>`;
     addBtn.style.background = "none";
     addBtn.style.border = "none";
     addBtn.style.color = "#e1e1e1";
-    addBtn.style.fontSize = "16px";
+    addBtn.style.display = "flex";
+    addBtn.style.alignItems = "center";
     addBtn.style.cursor = "pointer";
     addBtn.style.marginLeft = "auto";
     addBtn.addEventListener("click", () => {
@@ -674,8 +676,8 @@ class ChronoPanelCardEditor extends HTMLElement {
     iconWrap.innerHTML = `<svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="${info.icon}"/></svg>`;
     const badge = document.createElement("span");
     badge.style.position = "absolute";
-    badge.style.top = "-2px";
-    badge.style.right = "-2px";
+    badge.style.top = "-5px";
+    badge.style.right = "-5px";
     badge.style.width = "10px";
     badge.style.height = "10px";
     badge.style.borderRadius = "50%";
@@ -683,7 +685,7 @@ class ChronoPanelCardEditor extends HTMLElement {
       badge.style.background = "#4caf50";
     } else {
       badge.style.background = "none";
-      badge.style.border = "2px solid #ff9800";
+      badge.style.border = "2px solid #de6502";
       badge.style.boxSizing = "border-box";
     }
     iconWrap.appendChild(badge);
