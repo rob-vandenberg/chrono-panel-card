@@ -12,9 +12,10 @@
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.1.30';
+const CARD_VERSION = '1.1.31';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.1.31: Used exact colors/sizes measured directly against the real HA component - banner backgrounds (#202b21 visible / #372c18 hidden), eye icon colors (#429f47 visible / #ffa500 hidden), entity-state icon color (#8d8d8d) and size (24x24), badge size (10x10), orange ring border width (2px)
 // v1.1.30: Replaced emoji eye icon with real HA open-eye/crossed-eye SVG paths (sized, colored correctly via currentColor); replaced invented "Entity state" icon with the real branching-node path; failing-condition badge is now a hollow ring outline instead of a solid dot; fixed chevron rotation direction (expanded = up, collapsed = down)
 // v1.1.29: Fixed "+ Add condition" button colors using exact values measured directly from the real button with Photoshop's color picker (#002e3e resting, #004156 hover, #37c8fd text) instead of CSS variables that weren't resolving to the expected result
 // v1.1.28: Rebuilt the editor's rendering mechanism - persistent DOM skeleton built once, each section (tab strip, card toolbar, inner tabs, content area) updates only when it actually changes, instead of wiping and rebuilding the entire editor on every state change. Fixes a real crash (hui-card-picker thrown from inside its own update lifecycle when torn down mid-update during cut) and removes the underlying cause, not just that one occurrence. All existing behavior (tabs, move/copy/cut/delete, Config/Visibility tabs, child editor mounting, YAML toggle, visibility conditions, add-card picker) is unchanged.
@@ -537,11 +538,11 @@ class ChronoPanelCardEditor extends HTMLElement {
     status.style.borderRadius = "8px";
 
     const visible = conditions.length === 0 || this._evaluateConditions(conditions);
-    status.style.background = visible ? "#1f3322" : "#332b14";
+    status.style.background = visible ? "#202b21" : "#372c18";
 
     const dot = document.createElement("span");
     dot.style.display = "inline-flex";
-    dot.style.color = visible ? "#8bc88b" : "#d9a93b";
+    dot.style.color = visible ? "#429f47" : "#ffa500";
     const eyeOpenPath = "M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9M12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17M12,4.5C7,4.5 2.73,7.61 1,12C2.73,16.39 7,19.5 12,19.5C17,19.5 21.27,16.39 23,12C21.27,7.61 17,4.5 12,4.5Z";
     const eyeOffPath = "M11.83,9L15,12.16C15,12.11 15,12.05 15,12A3,3 0 0,0 12,9C11.94,9 11.89,9 11.83,9M7.53,9.8L9.08,11.35C9.03,11.56 9,11.77 9,12A3,3 0 0,0 12,15C12.22,15 12.44,14.97 12.65,14.92L14.2,16.47C13.53,16.8 12.79,17 12,17A5,5 0 0,1 7,12C7,11.21 7.2,10.47 7.53,9.8M2,4.27L4.28,6.55L4.73,7C3.08,8.3 1.78,10 1,12C2.73,16.39 7,19.5 12,19.5C13.55,19.5 15.03,19.2 16.38,18.66L16.81,19.08L19.73,22L21,20.73L3.27,3M12,7A5,5 0 0,1 17,12C17,12.64 16.87,13.26 16.64,13.82L19.57,16.75C21.07,15.5 22.27,13.86 23,12C21.27,7.61 17,4.5 12,4.5C10.6,4.5 9.26,4.75 8,5.2L10.17,7.35C10.74,7.13 11.35,7 12,7Z";
     dot.innerHTML = `<svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="${visible ? eyeOpenPath : eyeOffPath}"/></svg>`;
@@ -669,13 +670,14 @@ class ChronoPanelCardEditor extends HTMLElement {
     const iconWrap = document.createElement("span");
     iconWrap.style.position = "relative";
     iconWrap.style.display = "inline-flex";
-    iconWrap.innerHTML = `<svg viewBox="0 0 24 24" width="20" height="20"><path fill="currentColor" d="${info.icon}"/></svg>`;
+    iconWrap.style.color = "#8d8d8d";
+    iconWrap.innerHTML = `<svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="${info.icon}"/></svg>`;
     const badge = document.createElement("span");
     badge.style.position = "absolute";
     badge.style.top = "-2px";
     badge.style.right = "-2px";
-    badge.style.width = "8px";
-    badge.style.height = "8px";
+    badge.style.width = "10px";
+    badge.style.height = "10px";
     badge.style.borderRadius = "50%";
     if (conditionPasses) {
       badge.style.background = "#4caf50";
