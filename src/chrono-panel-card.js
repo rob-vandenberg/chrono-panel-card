@@ -12,9 +12,10 @@
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '1.1.34';
+const CARD_VERSION = '1.1.35';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v1.1.35: Fixed the actual scroll bug - it was the dropdown menu itself (state/numeric_state choices) opening off-screen, not the new condition card. Scroll now triggers on opening the dropdown, using the same shadow-boundary-crossing logic as before. The earlier two attempts (1.1.33, 1.1.34) were both scrolling the wrong element at the wrong moment.
 // v1.1.34: Fixed the scroll-into-view fix from 1.1.33, which never actually moved the scrollbar - the real scroll container (HA's .element-editor.ha-scrollbar) sits outside our own shadow boundary (we're inside hui-card-element-editor's shadow root), so plain scrollIntoView()/closest() couldn't reach it. Now walks out via getRootNode().host, finds the real container, and scrolls it directly.
 // v1.1.33: Newly added condition card scrolls into view automatically (only on add, not on every edit)
 // v1.1.32: "+" tab button is now a real 24x24 SVG icon instead of plain text; condition badge moved 3px right and 3px up; orange (failing) ring color changed to #de6502
@@ -626,31 +627,6 @@ class ChronoPanelCardEditor extends HTMLElement {
           : customElements.get("ha-card-condition-numeric_state").defaultConfig;
         this._updateVisibility(cardConfig, [...conditions, { ...newCond }]);
         this._closeOpenPopup();
-        // _contentEl's only child is the visibility editor's own
-        // container; the last condition card sits just before the
-        // "+ Add condition" wrapper inside that container.
-        const visibilityContainer = this._contentEl.firstElementChild;
-        const newCard = visibilityContainer?.lastElementChild?.previousElementSibling;
-        if (newCard) {
-          // The real scrolling element (HA's .element-editor.ha-scrollbar)
-          // sits in light DOM, outside the shadow root we're rendered
-          // inside (hui-card-element-editor's). scrollIntoView()'s
-          // automatic ancestor search does not cross that boundary, so
-          // we step out explicitly via getRootNode().host before
-          // searching for the real scroll container.
-          const root = this.getRootNode();
-          const host = root && root.host;
-          const scrollContainer = host ? host.closest(".ha-scrollbar") : null;
-          if (scrollContainer) {
-            const containerRect = scrollContainer.getBoundingClientRect();
-            const cardRect = newCard.getBoundingClientRect();
-            if (cardRect.bottom > containerRect.bottom) {
-              scrollContainer.scrollTop += (cardRect.bottom - containerRect.bottom) + 16;
-            }
-          } else {
-            newCard.scrollIntoView({ behavior: "smooth", block: "nearest" });
-          }
-        }
       });
       dropdown.appendChild(row);
     });
@@ -659,6 +635,22 @@ class ChronoPanelCardEditor extends HTMLElement {
       e.stopPropagation();
       if (dropdown.style.display === "none") {
         this._openPopup(dropdown);
+        // The dropdown can open below the visible area. The real
+        // scrolling container (HA's .element-editor.ha-scrollbar) sits
+        // in light DOM, outside our shadow boundary, so we step out
+        // via getRootNode().host before searching for it.
+        const root = this.getRootNode();
+        const host = root && root.host;
+        const scrollContainer = host ? host.closest(".ha-scrollbar") : null;
+        if (scrollContainer) {
+          const containerRect = scrollContainer.getBoundingClientRect();
+          const dropdownRect = dropdown.getBoundingClientRect();
+          if (dropdownRect.bottom > containerRect.bottom) {
+            scrollContainer.scrollTop += (dropdownRect.bottom - containerRect.bottom) + 16;
+          }
+        } else {
+          dropdown.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
       } else {
         this._closeOpenPopup();
       }
