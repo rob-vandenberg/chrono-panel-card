@@ -15,9 +15,10 @@ import { styleMap }              from 'https://unpkg.com/lit@2.0.0/directives/st
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '2.0.36';
+const CARD_VERSION = '2.0.37';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v2.0.37: Fixed css stylingin edit mode
 // v2.0.36: Full rewrite onto LitElement (was a hand-built HTMLElement-based
 //          card/editor). Editor's persistent-DOM-skeleton machinery
 //          (_buildSkeleton/_updateTabStrip/_updateCardToolbar/_updateInnerTabs/
@@ -264,6 +265,7 @@ class ChronoPanelCard extends LitElement {
   static properties = {
     _config: { attribute: false },
     _hass:   { attribute: false },
+    preview: { type: Boolean, reflect: true },
   };
 
   static async getConfigElement() {
@@ -341,9 +343,9 @@ class ChronoPanelCard extends LitElement {
       height: 100%;
     }
     hui-card {
-      position: absolute;
       top: 0;
       left: 0;
+      position: absolute;
       width: 100%;
       height: 100%;
     }
