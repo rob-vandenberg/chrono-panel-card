@@ -15,9 +15,10 @@ import { styleMap }              from 'https://unpkg.com/lit@2.0.0/directives/st
 
 
 // ─── Version ──────────────────────────────────────────────────────────────────
-const CARD_VERSION = '2.0.37';
+const CARD_VERSION = '2.0.38';
 
 // ─── Version History ──────────────────────────────────────────────────────────
+// v2.0.38: CSS changes to fix layout problems inside different containers
 // v2.0.37: Fixed css stylingin edit mode
 // v2.0.36: Full rewrite onto LitElement (was a hand-built HTMLElement-based
 //          card/editor). Editor's persistent-DOM-skeleton machinery
@@ -263,10 +264,32 @@ function storage(options) {
 // ─── Card ───────────────────────────────────────────────────────────────────
 class ChronoPanelCard extends LitElement {
   static properties = {
-    _config: { attribute: false },
-    _hass:   { attribute: false },
-    preview: { type: Boolean, reflect: true },
+    _config:       { attribute: false },
+    _hass:         { attribute: false },
+    preview:       { type: Boolean, reflect: true },
+    // HA sets [preview] both inside the isolated card-edit dialog AND during
+    // ordinary dashboard pencil/edit mode - those two contexts need opposite
+    // layout behavior (see debug 2.0.37.1-2.0.37.3 investigation). This
+    // second flag independently confirms we're specifically inside the
+    // isolated dialog (real DOM ancestor, not an HA-provided hint), by
+    // checking for hui-dialog-edit-card in the ancestor chain once on
+    // connect.
+    dialogPreview: { type: Boolean, reflect: true, attribute: 'dialog-preview' },
   };
+
+  connectedCallback() {
+    super.connectedCallback();
+    let node = this.parentElement;
+    let inDialog = false;
+    while (node) {
+      if (node.tagName && node.tagName.toLowerCase() === 'hui-dialog-edit-card') {
+        inDialog = true;
+        break;
+      }
+      node = node.parentElement || (node.getRootNode && node.getRootNode().host) || null;
+    }
+    this.dialogPreview = inDialog;
+  }
 
   static async getConfigElement() {
     return document.createElement("chrono-panel-card-editor");
@@ -334,6 +357,7 @@ class ChronoPanelCard extends LitElement {
   static styles = css`
     :host {
       display: block;
+      position: relative;
       width: 100%;
       height: 100%;
     }
@@ -348,6 +372,22 @@ class ChronoPanelCard extends LitElement {
       position: absolute;
       width: 100%;
       height: 100%;
+    }
+    /* Only the isolated card-edit dialog's preview pane needs normal flow
+       (real height often unavailable there - see 2.0.37.1 investigation).
+       HA's own [preview] attribute alone is not specific enough: it is also
+       set during ordinary dashboard pencil/edit mode, which is still the
+       live dashboard grid with real height available and needs the same
+       absolute/fill behavior as plain dashboard mode (confirmed - using
+       [preview] alone caused a 1.5x overflow regression in pencil mode).
+       [dialog-preview] is independently confirmed via a real DOM ancestor
+       check in connectedCallback(), not just an HA-provided hint. [DEBUG
+       2.0.37.3] */
+    :host([preview][dialog-preview]) hui-card {
+      position: static;
+      top: auto;
+      left: auto;
+      height: auto;
     }
   `;
 
