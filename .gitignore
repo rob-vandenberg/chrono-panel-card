@@ -31,3 +31,16 @@ github/
 # IDE
 .vscode/
 .idea/
+
+# Never push these (cleanup 2026-09-29)
+*.zip
+*.log
+
+# Removed from repo in cleanup 2026-09-29 (unused artwork, old files)
+/art/chrono-panel-card-banner-2.png
+/art/chrono-panel-card-banner.png
+/art/chrono-panel-card.svg
+/art/chrono-slideshow-card.png
+/art/chrono-slideshow-card.svg
+/art/editor.png
+/art/under-construction.png
